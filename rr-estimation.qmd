@@ -1,0 +1,344 @@
+---
+title: "Risk ratio estimation using regression methods"
+author: "Abdullah Abdelaziz"
+format: html
+editor: visual
+---
+
+```{r}
+#| label: packages
+pacman::p_load(tidyverse, brm, logbin, gtsummary, modelsummary, easystats, broom, sandwich, riskCommunicator, fixest,
+               skimr, boot,xtable, here, marginaleffects)
+```
+
+
+# Source article
+https://academic.oup.com/ije/advance-article/doi/10.1093/ije/dyac220/6843281?searchresult=1
+
+
+```{r}
+#| label: load and clean dataset
+Nd<- url("https://cdn1.sph.harvard.edu/wp-content/uploads/sites/1268/1268/20/nhefs.csv")
+nd<-read.csv(Nd)
+
+
+# Make changes in the data according ro the instructions in the article
+nd2 <- nd |> 
+  mutate(incomeb = ifelse(income>15,1,0),
+         maritalb = ifelse(marital>2,1,0),
+         wtb = ifelse(wt82_71 > median(wt82_71, na.rm = T), 1,0)) |> 
+  select(qsmk,wtb,exercise,sex,age,race,incomeb,maritalb,school,asthma,bronch) |> 
+  mutate(
+    across(c(exercise, incomeb, maritalb, sex, race, asthma, bronch),
+           ~as_factor(.x))
+  )
+
+regression_formula <- paste0(
+  "wtb~", #LHS
+  paste(names(nd2)[-2],collapse = "+") # RHS
+
+) |> as.formula()
+```
+
+
+# Estimation approaches
+
+## Log-Binomial methods
+
+```{r}
+glm(regression_formula, data = nd2, 
+    family = binomial(link = "log"))
+```
+
+As we can see, it did not converge. R asks us to supply starting values. Let's try other solutions to fix this.
+
+### Solution 1
+Supply starting values from successful fit of the logistic regression
+```{r}
+# Fit logistic regression
+logit_fit <- glm(regression_formula, data = nd2, 
+    family = binomial())
+
+# Try fitting the log binomial model
+glm(regression_formula, data = nd2, 
+    family = binomial(link = "log"),
+    mustart = fitted(logit_fit),# Supply the values from the logistic regression
+    ) 
+```
+This also did not work. This is strange because it worked with me before with another dataset.
+
+Anyway, let's try another solution
+### Solution 2
+Use log(1-p) where p is the probabilty of the outcome as a starting value for the outcome and set the rest to zeros
+```{r}
+log_inverse_p_outcome <- log(1-sum(nd2$wtb, na.rm = T)/nrow(nd2))
+# Try fitting the log binomial model
+glm(regression_formula, data = nd2, 
+    family = binomial(link = "log"),
+    start = c(log_inverse_p_outcome, rep(0,11))
+    ) |> tbl_regression(exp = T)
+```
+
+This is working and we have an estimate of risk ratio to be 1.30 (1.17, 1.43)
+
+## Logbin package
+
+```{r}
+log_inverse_p_outcome <- log(1-sum(nd2$wtb, na.rm = T)/nrow(nd2))
+
+#Extracting starting values from a Poisson model (we used these in the model)
+modelRR <- glm(regression_formula,data=nd2,family = poisson("log"))
+cf<-modelRR$coefficients
+cf<-cf[-1]
+
+#logbin regression with adaptive barrier (constrained optimisation) computational method
+
+start.p<-c(log(846/1629),cf)
+fit.logbin <- logbin(formula(bin_id), data = nd, 
+                     start = start.p, trace = 1,method="ab")
+
+#logbin regression with the Expectation maximization algorithm
+
+start.p<-c(log(846/1629),cf)
+fit.logbin <- logbin(regression_formula, data = nd2, 
+                     start = start.p, trace = 1,method="ab")
+fit.logbin.em <- update(fit.logbin, method = "em")
+# Speed up convergence by using acceleration methods
+fit.logbin.em.acc <- update(fit.logbin.em, accelerate = "squarem")
+fit.logbin.em.acc
+
+
+fit.logbin |> tbl_regression(exp = T)
+fit.logbin.em |> tbl_regression(exp = T)
+fit.logbin.em.acc |> tbl_regression(exp = T)
+```
+
+# Binary regression model
+
+I tried the code in the article but it's really difficult to implement
+
+
+# riskCommunicator package
+https://pubmed.ncbi.nlm.nih.gov/35849588/
+
+```{r}
+data(cvdd)
+cvdd.formula <- cvd_dth ~ DIABETES + AGE + SEX + BMI + CURSMOKE + PREVHYP
+
+## For reproducibility, we should always set the seed since the g-computation uses  
+## random resampling of the data to calculate confidence intervals and random  
+## sampling of the distribution when predicting outcomes.
+set.seed(1298)
+
+## Call the gComp function
+binary.res <- gComp(data = nd2, 
+                    formula = regression_formula, 
+                    outcome.type = "binary", 
+                    R = 200)
+
+binary.res$results.df
+
+
+```
+
+# Modified Poisson regression
+https://charliemarks.com/r-tutorials/modifiedpoissonregression
+https://cscu.cornell.edu/wp-content/uploads/92_riskratios.pdf
+This is an implementation using different dataset I just want to check if I can correctly adjust standard errors on-the-go using `feglm`
+```{r}
+regression_formula <- wtb ~ qsmk + exercise + sex + age + race + incomeb + maritalb + 
+    school + asthma + bronch
+regression_formula2 <- wtb ~ qsmk | exercise + sex + age + race + incomeb + maritalb + 
+    school + asthma + bronch
+
+# Estimation using usual R packages
+
+glm(regression_formula, 
+             data=nd2,
+             family = poisson(link="log")
+) |> 
+
+# Correct for the standard errors
+coeftest(vcov = sandwich) |> 
+  tidy(conf.int = T) |> 
+  mutate(
+    across(c(contains("estimate"),contains("conf")), ~exp(.x))
+  ) |> 
+  filter(term == "qsmk")
+
+
+# Estimation using fixest
+feglm(regression_formula, 
+             data=nd2,
+             family = poisson(link="log"),
+      vcov = sandwich
+)|> 
+
+  tidy(conf.int = T) |> 
+  mutate(
+    across(c(contains("estimate"),contains("conf")), ~exp(.x))
+  ) |> 
+  filter(term == "qsmk")
+```
+
+The results are identical.
+
+# Niami's paper examples
+
+We will regress `wt_delta` on `qsmk` (exposure) and other covariates ("exercise","income","marital","sex","race","asthma","bronch")
+
+```{r}
+#| label: import data
+nhefs <- read_csv("https://cdn1.sph.harvard.edu/wp-content/uploads/sites/1268/1268/20/nhefs.csv")  |>
+  select(qsmk,wt82_71,exercise,sex,age,race,income,marital,school,asthma,bronch) %>% 
+  mutate(income=as.numeric(income>15),
+         marital=as.numeric(marital>2)) |> 
+  mutate(wt_delta = as.numeric(wt82_71>median(wt82_71, na.rm = T))) |> 
+  mutate(
+    across(c(exercise,income,marital,sex,race,asthma,bronch), ~ as_factor(.x))
+  ) |> 
+  na.omit()
+
+
+```
+
+```{r}
+# Create regression formula
+covariates <- nhefs |> 
+  relocate(wt_delta) |> 
+  select(-1, -wt82_71) |> 
+  names() |> 
+  paste(collapse = "+")
+
+modelform <- paste("wt_delta ~",covariates) |> as.formula()
+```
+
+
+
+```{r}
+#| label: Odds ratio estimation
+#' This model can be used to quantify a conditionally adjusted odds ratio with correct standard error
+modelOR <- glm(modelform,data=nhefs,family = binomial("logit"),control = list(trace = TRUE))
+tidy(modelOR, conf.int = T)[2,]
+```
+
+
+
+```{r}
+#| label: Risk ratio estimation using log-binomial model
+
+# This model can be used to quantify a conditionally adjusted risk ratio with with correct standard error
+# However, error it returns an error and thus does not provide any results.
+modelRR2 <- glm(modelform,data=nhefs,family = binomial("log"),control = list(trace = TRUE))
+
+```
+
+```{r}
+#| label: Risk difference estimation using log-binomial model
+#This model can be used to quantify a conditionally adjusted risk difference with correct standard error
+modelRD <- glm(modelform,data=nhefs,family = binomial("identity"))
+modelRD |> tidy(conf.int = T)
+
+```
+
+```{r}
+#| label: Risk ratio estimation using poisson regression
+#' This model can be used to quantify a conditionally risk ratio using the Poisson distribuiton and log link function. 
+#' However, because the Poisson distribution is used, the model provides incorrect standard error estimates.
+#' To obtain the correct variance, we use the "sandwich" function to obtain correct sandwich (robust) standard error estimates.
+
+# I will do estimation and standard error correction in one step 
+glm(modelform,data=nhefs,family = poisson("log")) |> 
+  coeftest(vcov = sandwich) |> 
+  tidy(conf.int = T) |>  # convert to tibble and add confidence interval
+  mutate(
+    across(c(estimate, contains("conf")), ~ exp(.x))
+  ) |> 
+  slice(2)
+
+
+# Another way to do it
+feglm(modelform,data=nhefs,family = poisson("log"),vcov = sandwich) |> 
+  tidy(conf.int = T) |>  # convert to tibble and add confidence interval
+  mutate(
+    across(c(estimate, contains("conf")), ~ exp(.x))
+  ) |> 
+  slice(2)
+```
+
+
+```{r}
+#| label: Risk difference estimation using poisson regression
+# This model can be used to obtain a risk difference with the Gaussian distribution or using ordinary least 
+# squares (OLS, via the lm function). Again, the model based standard error estimates are incorrect. 
+
+# Method 1
+feols(modelform,data=nhefs, vcov = sandwich) |> 
+  tidy(conf.int = T) |> 
+  slice(2)
+
+# Method 2
+feglm(modelform,data=nhefs, vcov = sandwich, family = "gaussian") |> 
+  tidy(conf.int = T) |> 
+  slice(2)
+
+# Method 3
+lm(modelform,data=nhefs) |> 
+  coeftest(vcov = sandwich) |> 
+  tidy(conf.int = T) |> 
+  slice(2)
+
+# Method 3
+glm(modelform,data=nhefs, family = "gaussian") |> 
+  coeftest(vcov = sandwich) |> 
+  tidy(conf.int = T) |> 
+  slice(2)
+```
+
+
+```{r}
+#|label: checking interaction
+modelform_interaction <- paste("wt_delta ~",covariates, "+qsmk*exercise") |> as.formula()
+
+full_model <- lm(modelform_interaction,data=nhefs)
+reduced_model <- lm(modelform,data=nhefs)
+
+lrtest(full_model, reduced_model)
+```
+
+# Marginal standardization
+
+This technique is basically g-computation but for a single time point. It has the advantage of not assuming no interaction. In other words, we don't need the exposure effect homogeneity assumption across levels of the confounders.
+
+```{r}
+# Risk difference with g-computation
+fit_guassian <- glm(modelform, data = nhefs)
+comparisons(fit_guassian, variables = list(qsmk = 0:1)) |> summary()
+
+# Risk ratio with g-computation
+fit_logit <- glm(modelform, data = nhefs, family = binomial("logit"))
+comparisons(fit_rr, variables = list(qsmk = 0:1), transform_pre = "ratio") |> summary()
+```
+
+# Bootstrapping
+
+```{r}
+library(boot)
+set.seed(254)
+
+bootfun <- function(data, indices, ...) {
+    d <- data[indices, ]
+    mod_RD <- lm(modelform, data = d)
+    mod_RR <- glm(modelform, data = d, family = binomial("logit"))
+    RD <- comparisons(mod_RD, vcov = FALSE, variables = list(qsmk = 0:1))
+    RR <- comparisons(mod_RR, variables = list(qsmk = 0:1), transform_pre = "ratio") 
+    res <- c(tidy(RD)$estimate, tidy(RR)$estimate)
+    return(res)
+}
+
+b <- boot(data = nhefs, statistic = bootfun, R = 2000)
+
+b |> tidy(conf.int = T)
+boot.ci(boot.out = b, type = "perc")
+```
+
