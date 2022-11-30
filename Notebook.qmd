@@ -1,0 +1,18 @@
+---
+title: "Notebook"
+author: "Abdullah Abdelaziz"
+format: html
+editor: visual
+---
+
+| Date   | Topic                            | File names          |
+|--------|----------------------------------|---------------------|
+| Nov 29 | Risk ratio estimation techniques | `rr-estimation.qmd` |
+|        |                                  |                     |
+|        |                                  |                     |
+
+# About
+
+I created this repo in order to store the scripts that I use while learning from papers instead of textbooks. For textbooks or big topics, specific repos will be created.
+
+In this file I will index the topics I learn.
