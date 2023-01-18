@@ -1,0 +1,220 @@
+---
+title: "Robust standard errors in R"
+author: "Abdullah Abdelaziz"
+format: html
+editor: visual
+---
+
+# About
+
+This script is built mainly on this paper https://academic.oup.com/ije/article/50/1/346/6044447#229773580
+
+# Packages
+
+```{r}
+pacman::p_load(sandwich, tidyverse, broom, lmtest, estimatr, easystats, marginaleffects,
+               rstatix, ggthemes, ggsci, pubh, ggpubr, hrbrthemes, fishmethods, janitor,
+               lme4)
+```
+
+# Robust standard errors for heteroscedasticity: Asthma example
+
+```{r}
+# Create dataset
+asthma_df <- 
+  tibble(
+    asthma = c(rep("asthma",8), rep("non-asthma",7)),
+    deadspace = c(43, 44, 45, 56, 56, 57, 58, 64,
+                  31, 78, 79, 88, 92, 101, 112)
+  )
+
+# Run a t-test (Showing different ways to do the same thing)
+t.test(deadspace ~ asthma, data = asthma_df) |> 
+  report()
+
+t.test(deadspace ~ asthma, data = asthma_df) |> tidy()
+
+t_test(deadspace ~ asthma, data = asthma_df)
+
+
+# Plot data and calculate standard deviation to check constant variance assumption
+asthma_df |> 
+  ggplot(aes(x = asthma, y = deadspace)) + geom_jitter(width = 0.1) + theme_bw()
+
+# Get standard deviations
+asthma_df |> 
+  group_by(asthma) |> 
+  get_summary_stats(deadspace)
+
+```
+
+This means we have unequal variance. Let's check the standard error for the difference in means using `lm`
+```{r}
+lm(deadspace ~ asthma, data = asthma_df) |> tidy(conf.int = T)
+```
+
+The estimates above are assuming unequal variance, which is not true in our case. So, let's see what would happen if we used `HC3` to estimate SE and 95%CI
+
+```{r}
+# Using model_parameters from eaystats package
+model_parameters(
+  lm(deadspace ~ asthma, data = asthma_df),
+  vcov = "HC3"
+) |> tibble()
+
+# Using coeftest package
+lm(deadspace ~ asthma, data = asthma_df) |> 
+  coeftest(vcov = vcovHC, type = "HC3") |> 
+  tidy(conf.int = T)
+```
+
+From the numbers above we see that `HC3` robust standard errors are larger leading to higher p-values and wider confidence intervals.
+
+The chunk below shows different forms of robust HC SEs for the same model
+
+```{r}
+# Create a function to quickly compare between estimators of SE
+check_HC_se <- function(model, vcov_types = c("const","HC0", "HC1", "HC2", "HC3", "HC4", "HC4m", "HC5"), exponentiate = F){
+all_estimates <- tibble()
+  for (i in vcov_types) {
+    estimates <-   model |> 
+      coeftest(vcov = vcovHC, type = i) |> 
+      tidy(conf.int = T) |> 
+  group_by(term) |> 
+  mutate(
+    across(c(estimate, conf.low,conf.high), ~ifelse(exponentiate == T, exp(.x),.x))
+  ) |> 
+  ungroup() |> 
+      mutate(vcov_type = i) |> 
+      relocate(vcov_type) |> 
+      filter(term!= "(Intercept)")
+    
+all_estimates <- bind_rows(all_estimates, estimates)    
+}
+  all_estimates
+}
+
+# Use the function with lm (equivalent to t test p values)
+mod_lm <- lm(deadspace ~ asthma, data = asthma_df) 
+
+# See results
+check_HC_se(
+  model = mod_lm
+  )
+
+# Plot
+check_HC_se(
+  model = mod_lm
+  ) |> 
+  ggplot(aes(color = vcov_type)) + 
+  geom_errorbar(aes(y = vcov_type, x = estimate, xmin = conf.low,
+xmax = conf.high, width = 0.5
+)) + geom_point(aes(x = estimate, y = vcov_type))+ theme_bw()
+
+# Use the function with glm (equivalent to z test p values)
+mod_glm <- glm(deadspace ~ asthma,family=gaussian(link="identity"), data = asthma_df)
+
+# See results
+check_HC_se(
+  model = mod_glm
+  )
+
+# Plot
+check_HC_se(
+  model = mod_glm
+  ) |> 
+  ggplot(aes(color = vcov_type)) + 
+  geom_errorbar(aes(y = vcov_type, x = estimate, xmin = conf.low,
+xmax = conf.high, width = 0.5
+)) + geom_point(aes(x = estimate, y = vcov_type)) + theme_bw()
+```
+
+We can see that HC4m is the most conservative followed by HC3
+
+
+# Robust standard errors for incorrect variance function
+See the paper for theory
+
+```{r}
+# Create dataset
+## method 1
+df <- tibble(
+  occupation = c(rep(1,50), rep(0, 55)), # 0 for farmers and 1 for printers
+  breastfeeding = c(rep(1,36),rep(0,50-36),
+                    rep(1,30), rep(0,55-30)
+                    )
+)
+
+## method 2
+df <- expand_grid(
+  occupation = c(1, 0), # 0 for farmers and 1 for printers
+  breastfeeding = c(0,1)
+) |> 
+  mutate(
+    x = c(14,36,25,30)
+  ) |> 
+  uncount(x)
+
+df |> count(occupation, breastfeeding)
+```
+
+Estimate risk ratio with log-binomial and log-Poisson models
+
+```{r}
+rr_logbinomial <- glm(breastfeeding ~ occupation, data = df, family = binomial("log")) 
+rr_logPoisson <- glm(breastfeeding ~ occupation, data = df, family = poisson("log")) 
+
+rr_logbinomial |> 
+  tidy(exponentiate = T, conf.int = T)
+rr_logPoisson |> 
+  tidy(exponentiate = T, conf.int = T)
+```
+
+Poisson model has inflated SEs. We will correct for that now and compare
+
+```{r}
+# This is essentially the modified Poisson regression approach
+check_HC_se(
+  model = rr_logPoisson,
+  exponentiate =T # To get RR estimates instead of log(RR)
+)
+```
+
+Note that HC0 is the same as the model-based standard error of the logarithm of risk ratio. There are several other robust standard errors adjusting HC0 for biases due to small-sample and leveraged data: "HC0m", "HC1", "HC2", "HC3", "HC4", "HC4m", "HC5"
+
+# Robust standard errors for clutering
+```{r}
+df_cluster_trial <- tibble::tribble(
+  ~Subject, ~`BMI`, ~Treatment, ~Practice,
+        1L,           26.2,         1L,        1L,
+        2L,           27.1,         1L,        1L,
+        3L,             25,         1L,        2L,
+        4L,           28.3,         1L,        2L,
+        5L,           30.5,         1L,        3L,
+        6L,           28.8,         1L,        4L,
+        7L,             31,         1L,        4L,
+        8L,           32.1,         1L,        4L,
+        9L,           28.2,         1L,        5L,
+       10L,           30.9,         1L,        5L,
+       11L,             37,         0L,        6L,
+       12L,           38.1,         0L,        6L,
+       13L,           22.1,         0L,        7L,
+       14L,             23,         0L,        7L,
+       15L,           23.2,         0L,        8L,
+       16L,           25.7,         0L,        8L,
+       17L,           27.8,         0L,        9L,
+       18L,             28,         0L,        9L,
+       19L,             28,         0L,       10L,
+       20L,             31,         0L,       10L
+  ) |>
+  janitor::clean_names()
+
+
+# Methods to estimate intra-cluster correlation coefficient
+icc_estimate <- icc(lmer(bmi~(1|practice), data = df_cluster_trial))
+icc_estimate$ICC_unadjusted
+clus.rho(popchar = df_cluster_trial$bmi,
+                        cluster = df_cluster_trial$practice,
+                        type = 3)
+```
+
