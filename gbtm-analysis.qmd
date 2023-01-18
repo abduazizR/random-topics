@@ -1,0 +1,179 @@
+---
+title: "GBTM"
+format: html
+editor: visual
+---
+
+# Dec 4 work GBTM analysis test
+
+```{r}
+#| label: packages
+#| include: false
+#| warning: false
+#| message: false
+
+pacman::p_load(tidyverse, flextable, lubridate, ggthemes, hrbrthemes, scales, ggtext, ggfittext, ggbreak, patchwork, DataEditR, here, janitor, AdhereR, ggpubr, arrow, sjlabelled, ftExtra, consort, formattable, glue, lcmm, NormPsy)
+
+# source(here("codes/codes.R"))
+# source(here("codes/custom_schema.R"))
+```
+
+
+```{r}
+getwd()
+```
+
+
+
+```{r}
+# Format the data in suitable shape for analysis
+analytic_cohort  <-  
+    read_parquet("data/analytic_cohort.parquet")
+
+new_users_episodes <- analytic_cohort |> 
+  select(ENROLID, contains("episode_"), new_user)|> 
+  pivot_longer(cols = contains("episode"), names_to = "episode", values_to = "adherence") |> 
+  mutate(episode = parse_number(episode)) |> 
+  filter(new_user == 1)
+```
+
+
+
+For the analysis, I won't involve any covariates. The time variable is `episode` and the the outcome variable is `adherence`
+
+```{r}
+m1 <- hlme(
+  adherence ~ episode + I(episode^2),
+  random = ~ episode + I(episode^2),
+  subject = "ENROLID",
+  data = new_users_episodes
+)
+
+m2 <- hlme(
+  adherence ~ episode + I(episode^2),
+  random = ~ episode + I(episode^2),
+  subject = "ENROLID",
+  data = new_users_episodes,
+  mixture = ~ episode + I(episode^2),
+  B= m1,
+  ng = 2
+)
+
+m3 <- hlme(
+  adherence ~ episode + I(episode^2),
+  random = ~ episode + I(episode^2),
+  subject = "ENROLID",
+  data = new_users_episodes,
+  mixture = ~ episode + I(episode^2),
+  ng = 3,
+  B= m1)
+
+
+m4 <- hlme(
+  adherence ~ episode + I(episode^2),
+  random = ~ episode + I(episode^2),
+  subject = "ENROLID",
+  data = new_users_episodes,
+  mixture = ~ episode + I(episode^2),
+  B= m1,
+  ng = 4
+)
+
+m5 <- hlme(
+  adherence ~ episode + I(episode^2),
+  random = ~ episode + I(episode^2),
+  subject = "ENROLID",
+  data = new_users_episodes,
+  mixture = ~ episode + I(episode^2),
+  B= m1,
+  ng = 5,
+  nproc = 8
+)
+
+m6 <- hlme(
+  adherence ~ episode + I(episode^2),
+  random = ~ episode + I(episode^2),
+  subject = "ENROLID",
+  data = new_users_episodes,
+  mixture = ~ episode + I(episode^2),
+  B= m1,
+  ng = 6,
+  nproc = 8
+)
+
+m6 <- hlme(
+  adherence ~ episode + I(episode^2),
+  random = ~ episode + I(episode^2),
+  subject = "ENROLID",
+  data = new_users_episodes,
+  mixture = ~ episode + I(episode^2),
+  B= m1,
+  ng = 6,
+  nproc = 8
+)
+
+summarytable(m1,m2,m3, m4,m5,m6,
+             which = c("G", "loglik", "conv", "npm", "AIC", "BIC", "SABIC", "entropy","ICL", "%class")) |> as.data.frame()
+```
+
+```{r}
+x <- analytic_cohort |> 
+  select(ENROLID, contains("episo"))
+
+write_csv(x,"data/x.csv")
+```
+
+
+# Lennon's approach
+
+```{r}
+
+model1 <- lcmm::hlme(fixed=adherence ~ episode + I(episode^2),
+                   random=~-1,
+                   subject="ENROLID",
+                   ng=1,
+                   nwg=FALSE, 
+                   data=new_users_episodes
+                   )
+
+model5 <- lcmm::hlme(fixed=adherence ~ episode + I(episode^2),
+                   mixture = ~episode + I(episode^2),
+                   random=~-1,
+                   subject="ENROLID",
+                   ng=5,
+                   nwg=FALSE, 
+                   data=new_users_episodes,
+                  B=model1
+                   )
+
+plots <- residualplot_step1( model5, 
+                    nameofoutcome="adherence",  nameofage = "episode",
+                    data = new_users_episodes,
+                    ylimit=c(-2,2)) 
+```
+
+
+```{r}
+#| label: testing the validity of Lennon
+library(LCTMtools)
+testmodel0 <- lcmm::hlme(fixed=bmi~1+age+I(age^2),
+                   random=~-1,
+                   subject="id",
+                   ng=1,
+                   nwg=FALSE, 
+                   data=data.frame(bmi_long)
+                   )
+
+testmodel1 <- lcmm::hlme(fixed=bmi~age+I(age^2),
+                   random=~-1,
+                   subject="id",
+                   ng=1,
+                   nwg=FALSE, 
+                   data=data.frame(bmi_long),
+                   B=
+                   )
+
+testmodel0
+testmodel1
+```
+
