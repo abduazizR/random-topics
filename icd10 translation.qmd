@@ -1,0 +1,139 @@
+---
+title: "ICD 10 codes translation using R"
+author:
+  - name: Abdullah Abdelaziz
+    affiliations:
+      - PhD student at Pharmacy Systems Outcomes and Policy, UIC
+format: 
+  html:
+    toc: true
+    theme: united
+    df-print: kable
+editor: visual
+---
+
+::: callout-warning
+## Updates
+
+-   January 2023: Please see @sec-icd-10-codes-after-2016 for how to deal with recent ICD-10 codes
+:::
+
+# About
+
+In this tutorial, I will demonstrate how to translate ICD-10-CM to their meanings easily without the need to do laborious and repetitive `if_else()` or `case_when()` calls.
+
+# Necessary packages
+
+We will need to load `tidyverse` and `icd.data` packages for this tutorial. If you don't have them installed, you would need to run `install.packages(c("tidyverse","icd.data))` in your console before running the following chunk. After the installation is done, run the following chunk.
+
+```{r}
+#| warning: false
+#| message: false
+# Load necessary packages 
+library(tidyverse)
+library(icd.data)
+library(archive)
+library(janitor)
+```
+
+# Create dummy data
+
+I will demonstrate the method by creating a dummy data with two columns:
+
+1.  `id` : Just random identifiers, nothing special!
+2.  `code`: ICD-10 codes that you might have in your dataset and want to translate.
+
+You don't need to create this data. I am just doing this for illustration.
+
+```{r}
+#| warning: false
+#| message: false
+# Create dummy data having some ids and codes (I assume your data is somewhat similar to this dummy_data)
+dummy_data <- tibble(
+  id = 1:20, 
+  # Just borrowing random 20 ICD-10 codes from the icd10cm2016 dataset from the icd.data package
+  code = sample_n(as_tibble(icd10cm2016$code),20) |> as_vector() 
+)
+
+dummy_data
+```
+
+# Translation
+
+Now let's translate the codes to their literal meanings. We will use the `icd10cm2016` dataset from the `icd.data` package. This dataset should be available to you once you have the `icd.data` loaded. Before the translation, we need to change the variable `code` in the `icd10cm2016` dataset from `icd10cm` type to `character` (Not sure why the package's author has this strange type of variables).
+
+```{r}
+#| warning: false
+#| message: false
+icd10cm2016 <- icd10cm2016 |> 
+  mutate(code = as.character(code))
+```
+
+Now, we will do the translation simply using `left_join`
+
+```{r}
+#| warning: false
+#| message: false
+left_join(dummy_data, icd10cm2016) |> 
+  # keep the relevant variables
+  select(id,code, short_desc, long_desc)
+```
+
+# ICD-10 codes after 2016 {#sec-icd-10-codes-after-2016}
+
+-   The demonstration above might not be beneficial if you have new ICD-10 codes after 2016.
+
+-   Below, I will demonstrate how to solve this issue
+
+------------------------------------------------------------------------
+
+## Get the most recent version of ICD-10
+
+-   Since we don't have ready packages, we will use the CDC [website](https://ftp.cdc.gov/pub/Health_Statistics/NCHS/Publications/ICD10CM/April-1-2023-Update) to get the most recent release.
+-   I downloaded the file called `icd10cm-code descriptions- April 1 2023.zip`
+
+```{r}
+#|warning: false
+#| output: false
+
+# Download the zip file and extract dataset 
+archive::archive_extract(
+"https://ftp.cdc.gov/pub/Health_Statistics/NCHS/Publications/ICD10CM/April-1-2023-Update/icd10cm-code%20descriptions-%20April%201%202023.zip",
+files= "icd10cm-codes- April 1 2023.txt",dir = getwd())
+
+# read the dataset
+df_raw <- tibble(read_lines("icd10cm-codes- April 1 2023.txt")) |>
+clean_names()
+# clean the dataset
+df_clean <- df_raw |>
+rename(code_and_desc = read_lines_icd10cm_codes_april_1_2023_txt) |>
+mutate(code = str_sub(code_and_desc,start = 1, end =7)) |>
+mutate(description= str_sub(code_and_desc,start = 8)) |>
+select(-code_and_desc) |>
+mutate_all(str_squish)
+# Let's rename it
+icd10_dictionary <- df_clean
+
+```
+
+## Testing the new dataset
+
+-   From the previous step, we generated `icd10_dictionary` which we will use for generating translation. Now, I will use `dummy_data` that we made before, but I will add a new code that was not used in 2016
+
+```{r}
+new_dummy_data <- dummy_data |> 
+  add_row(id = 21, code = "U071") # COVID-19 code
+```
+
+Now, let's translate as we did before
+
+```{r}
+#| warning: false
+#| message: false
+new_dummy_data |> 
+  left_join(icd10_dictionary)
+```
+
+-   This detected COVID successfully, but you can see that we missed some codes too. I believe the reason behind this is that some ICD-10 codes got deleted, retired, or modified by time. In such scenarios, I would apply the same steps demonstrated before using different versions of ICD-10-codes to ensure that I captured as many as I can.
+
+And that's it! Hope you found this useful. Don't hesitate to reach out by email for questions: [aabdel51\@uic.edu](aabdel51@uic.edu)
