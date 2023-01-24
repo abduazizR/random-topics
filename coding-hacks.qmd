@@ -1,0 +1,62 @@
+---
+title: "Coding hacks"
+format: html
+editor: visual
+---
+
+
+# Running multiple linear regressions
+What if you wanted to loop over a set of univariate analsyes
+
+
+```{r}
+pacman::p_load(tidyverse, broom, gtsummary)
+```
+
+
+```{r}
+predictors <- names(trial[1:5]) # List your covariates
+outcome <- "response" # list the outcome variable
+formula_strings <- paste0(response, "~", predictors) # Create formula strings
+
+map(formula_strings,
+    ~lm(as.formula(.x), data = trial)) |> 
+  map(tidy, conf.int = T) |> 
+  bind_rows()
+```
+
+
+# Running regressions by group (subgroup analysis)
+
+The chunk below shows the boring and tedious way to do it
+
+```{r}
+trial |> 
+  filter(stage == "T1") %>%
+  lm(response~age, data = .) |> 
+  tidy()
+```
+
+
+```{r}
+trial |> 
+  group_by(stage) |> 
+  nest() |> 
+  mutate(model = purrr::map(data, ~lm(response~age, data = .x))) |> 
+  mutate(tidy_model = map(model,tidy)) |> 
+  unnest(tidy_model)
+```
+
+# Method 2
+
+```{r}
+trial |> 
+  group_by(stage) |> 
+  do(
+    model =  lm(response ~ age, data = .) |> 
+       tidy()
+       ) |> 
+  unnest(model)
+  
+```
+
