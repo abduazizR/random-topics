@@ -14,7 +14,7 @@ This script is built mainly on this paper https://academic.oup.com/ije/article/5
 ```{r}
 pacman::p_load(sandwich, tidyverse, broom, lmtest, estimatr, easystats, marginaleffects,
                rstatix, ggthemes, ggsci, pubh, ggpubr, hrbrthemes, fishmethods, janitor,
-               lme4)
+               lme4, miceadds)
 ```
 
 # Robust standard errors for heteroscedasticity: Asthma example
@@ -49,6 +49,7 @@ asthma_df |>
 ```
 
 This means we have unequal variance. Let's check the standard error for the difference in means using `lm`
+
 ```{r}
 lm(deadspace ~ asthma, data = asthma_df) |> tidy(conf.int = T)
 ```
@@ -131,8 +132,8 @@ xmax = conf.high, width = 0.5
 
 We can see that HC4m is the most conservative followed by HC3
 
-
 # Robust standard errors for incorrect variance function
+
 See the paper for theory
 
 ```{r}
@@ -183,6 +184,7 @@ check_HC_se(
 Note that HC0 is the same as the model-based standard error of the logarithm of risk ratio. There are several other robust standard errors adjusting HC0 for biases due to small-sample and leveraged data: "HC0m", "HC1", "HC2", "HC3", "HC4", "HC4m", "HC5"
 
 # Robust standard errors for clutering
+
 ```{r}
 df_cluster_trial <- tibble::tribble(
   ~Subject, ~`BMI`, ~Treatment, ~Practice,
@@ -218,3 +220,57 @@ clus.rho(popchar = df_cluster_trial$bmi,
                         type = 3)
 ```
 
+Estimate standard error of the difference in BMI between treatment groups
+
+```{r}
+lm_mod_clustered <- lm(bmi ~ treatment, df_cluster_trial) 
+
+lm_mod_clustered |> tidy(conf.int = T)
+```
+
+The standard error in the output above ignores clustering by `practice`. Remember the model-based approach assumes equal variance.
+
+Now, let's estimate the robust clustered SEs
+
+```{r}
+# Method 1
+mod2<-lm.cluster(data=df_cluster_trial, bmi~treatment, cluster="practice",weights=NULL, subset=NULL )
+summary(mod2)
+coef(mod2)
+vcov(mod2)
+confint(mod2)
+
+# Method 2
+model_parameters(
+  mod_clustered,
+  vcov = "CL", # type of covariance matrix
+  vcov_args = list(type = "HC1", cluster = df_cluster_trial$practice), # type of robust estimation
+  
+) |> 
+  tibble()
+```
+
+If you want to use `glm` instead of `lm`
+
+```{r}
+# Method 1
+mod1<-glm.cluster(data=df_cluster_trial, bmi~treatment, cluster="practice", weights=NULL, subset=NULL, family="gaussian" )
+summary(mod1)
+coef(mod1)
+vcov(mod1)
+confint(mod1)
+
+# Method 2
+glm_mod_clustered <- glm(bmi ~ treatment, df_cluster_trial, family = gaussian("identity"))
+
+
+model_parameters(
+  glm_mod_clustered,
+  vcov = "vcovCL", # type of covariance matrix
+  vcov_args = list(type = "HC0", cluster = df_cluster_trial$practice), # type of robust estimation
+  
+) |> 
+  tibble()
+```
+
+The results are similar but they are not identical, and they are not even identical with the original paper!!
