@@ -1,0 +1,66 @@
+---
+title: "Identifying paths in complex DAGs"
+author: "Abdullah Abdelaziz"
+format: html
+editor: visual
+bibliography: references.bib
+---
+
+# Purpose
+
+As I encounter complex DAGs (DAGs with many variables and many arrows), it would be better to have a tool to help me dissecting the DAG and understand it better
+
+```{r}
+pacman::p_load(dagitty, ggdag, tidyverse)
+```
+
+Using the example from[@yoshida]
+
+```{r}
+yoshida_dag <- dagitty('dag {
+bb="0,0,1,1"
+A [exposure,pos="0.125,0.389"]
+L0 [pos="0.054,0.693"]
+L1 [pos="0.236,0.294"]
+L2 [pos="0.434,0.755"]
+M1 [pos="0.332,0.567"]
+M2 [pos="0.512,0.400"]
+Y [outcome,pos="0.660,0.568"]
+A -> L1
+A -> L2
+A -> M1
+A -> M2
+A -> Y
+L0 -> A
+L0 -> L1
+L0 -> L2
+L0 -> M1
+L0 -> M2
+L0 -> Y
+L1 -> M1
+L1 -> Y
+L2 -> M2
+L2 -> Y
+M1 -> L2
+M2 -> Y
+}
+')
+
+my_paths <- tibble::tibble(
+path = paths(yoshida_dag, Z= list("M1","M2"))$paths,
+Open = paths(yoshida_dag, Z= list("M1","M2"))$open
+)
+
+```
+
+I identified the paths successfully. Now, I need to explain this statement in Yoshida's paper:
+"To control for M1 and M2 to obtain the controlled direct effect of A, we need to account for the confounders of these variables, namely L1 and L2. However, these L1 and L2 are post-treatment confounding variables that may partly mediate the effect of A outside M1 and M2"
+
+```{r}
+my_paths |> 
+  filter(Open == T) |> 
+  filter(str_detect(path, "M1|M2"))
+```
+
+All the paths above would result in biased estimates. Thus we need to account for L0,L1,L2 in the analysis
+
