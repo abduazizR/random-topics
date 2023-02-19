@@ -1,0 +1,153 @@
+---
+title: "G-methods"
+author: "Abdullah Abdelaziz"
+format: html
+editor: visual
+bibliography: references.bib
+---
+
+# About
+
+In this file, I will write my implementation of the introduction to g methods paper by Naimi et al [@naimi2017].
+
+
+# Packages
+```{r}
+pacman::p_load(tidyverse, marginaleffects, janitor, gtsummary)
+```
+
+
+
+```{r}
+fake_data_weighted <- tibble::tribble(
+           ~A0,~Z1,~A1,~Y,~N,
+0,0, 0, 87.288 ,209271
+,0,0, 1, 112.107, 93779
+,0,1, 0, 119.654, 60657
+,0,1, 1, 144.842, 136293,
+1,0, 0, 105.282, 134781,
+1,0, 1, 130.184, 60789
+,1,1, 0, 137.720, 93903
+,1,1, 1, 162.832, 210527
+  )
+
+fake_data_raw <- fake_data_weighted |> 
+  uncount(N)
+```
+
+
+# Standard regression models
+```{r}
+mod1 <- lm(Y ~ A1+A0+I(A1*A0), data = fake_data_weighted, weights = N)
+mod2 <- glm(Y ~ A1+A0+I(A1*A0)+Z1, data = fake_data_weighted, weights = N)
+mod3 <- glm(Y ~ A0, data = fake_data_weighted, weights = N)
+mod4 <- glm(Y ~ A0+Z1, data = fake_data_weighted, weights = N)
+mod5 <- glm(Y ~ A1, data = fake_data_weighted, weights = N)
+mod6 <- glm(Y ~ A1+Z1, data = fake_data_weighted, weights = N)
+
+
+comparisons(
+  mod1,
+  # variables = list(PClass = c("3rd", "1st")),
+  newdata = datagrid(A0 = 1, A1 = 1))
+
+comparisons(
+  mod2,
+  variables = list(A0=0:1,A1=0:1),
+  newdata = datagrid(A0 = 1, A1 = 1)) |> 
+  summarise(sum(estimate))
+
+
+comparisons(
+  mod3,
+  variables = list(A0=0:1),
+  newdata = datagrid(A0 = 1))
+
+comparisons(
+  mod5,
+  variables = list(A1=0:1),
+  newdata = datagrid(A1 = 1))
+
+comparisons(
+  mod6,
+  variables = list(A1=0:1),
+  newdata = datagrid(A1 = 1))
+```
+
+```{r}
+equatiomatic::extract_eq(mod2, intercept = "beta")
+```
+$$
+E( \operatorname{Y} ) = \beta_{0} + \beta_{1}(\operatorname{A0}) + \beta_{2}(\operatorname{A1}) + \beta_{3}(\operatorname{Z1}) + \beta_{4}(\operatorname{A0} \times \operatorname{A1})
+$$
+
+
+
+# g formula
+
+
+```{r}
+fake_data_raw
+model <- glm(Y ~ A0+A1+Z1+I(A0*A1), data = fake_data_raw)
+fake_data_raw |> 
+  group_by(A0) |> 
+  summarise(mean(Z1))
+predict(model, newdata = tibble(A1=0,A0=0,Z1=0))*(1-0.39390)+
+predict(model, newdata = tibble(A1=0,A0=0,Z1=1))*0.39390
+
+predict(model, newdata = tibble(A1=1,A0=1,Z1=0))*(1-0.60886)+
+predict(model, newdata = tibble(A1=1,A0=1,Z1=1))*0.60886
+
+predict(model, newdata = tibble(A1=0,A0=1,Z1=0))*(1-0.60886)+
+predict(model, newdata = tibble(A1=0,A0=1,Z1=1))*0.60886
+
+predict(model, newdata = tibble(A1=1,A0=0,Z1=0))*(1-0.39390)+
+predict(model, newdata = tibble(A1=1,A0=0,Z1=1))*0.39390
+
+predictions(
+  model,
+  newdata = fake_data_raw
+  ) |> 
+  group_by(A0,A1,Z1) |> 
+  summarise(weighted.mean(estimate,Z1))
+```
+
+```{r}
+nd <- datagrid(
+    model = model,
+    A0 = c(0, 1),
+    A1 = c(0,1),
+    grid_type = "counterfactual")
+
+nd |> count(A0,A1)
+```
+
+# Marginal structural model with IPW
+
+```{r}
+# Create weights
+ipw_fake_data_raw <- fake_data_raw |> 
+  # filter(Z1 == 1) |> 
+  group_by(Z1) |> 
+  mutate(pr_a1_eq_zero = mean(A1==0),
+         pr_a1_eq_1 = mean(A1==1)) |> 
+  ungroup() |> 
+  mutate(p_a0_marginal = mean(A0),
+         p_a1_marginal = mean(A1)) |> 
+  mutate(across(pr_a1_eq_zero:p_a1_marginal, round,3)) |> 
+  # mutate(weights = (p_a0_marginal*p_a1_marginal)/(p_a0_marginal*))
+  mutate(weights = case_when(
+    A1==0 ~ (p_a0_marginal*p_a1_marginal)/(p_a0_marginal*pr_a1_eq_zero),
+    A1==1 ~ (p_a0_marginal*p_a1_marginal)/(p_a0_marginal*pr_a1_eq_1)
+  ))
+
+# Method 1: manual
+ipw_fake_data_raw |> 
+  group_by(A0,A1) |> 
+  summarise(weighted.mean(Y, weights))
+
+
+# Method 2: regression
+lm(Y ~ A0*A1, data = ipw_fake_data_raw, weights = weights) |> tidy()
+```
+
