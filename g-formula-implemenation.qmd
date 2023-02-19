@@ -1,0 +1,152 @@
+---
+title: "g-formula implementation"
+author: "Abdullah Abdelaziz"
+format: html
+editor: visual
+bibliography: references.bib
+---
+
+# About
+
+This file is an attempt to implement g-formula in R using two examples
+
+# Snowden 2011 paper
+The following code is for an example from this paper [@snowden2011].
+
+```{r}
+pacman::p_load(tidyverse, marginaleffects, tidymodels,
+               gtsummary, modelr)
+```
+
+#Generate simulated data set
+
+```{r}
+n<-300
+set.seed(285)
+
+simdata <- 
+  tibble( 
+    W1 = rbinom(n,1,0.4), # Gender
+    W2 = rbinom(n,1,0.5), #Controller medication use
+    A = rbinom(n,1,(0.5+0.2*W1-0.3*W2)), # ozone exposure
+    Y = rnorm(n,(3-0.5*A+W1+0.3*A*W2),.4) #FEC1 (the outcome variable)
+         )
+
+simdata |> 
+  skimr::skim()
+```
+
+# Regression implementation
+
+```{r}
+# Model 1
+model1 <- lm(Y ~ A, data = simdata)
+
+# Model 2
+model2 <- lm(Y ~ A + W1 + W2, data = simdata)
+
+
+# Model 3
+model3 <- lm(Y ~ A + W1 + W2*A, data = simdata)
+
+# Model 4 
+model4 <- lm(Y ~ A + W1 + W2:A, data = simdata)
+
+traditional_models <-   list("Model 1" =model1,
+       "Model 2"= model2,
+       "Model 3"= model3,
+       "Model 4"= model4)
+
+traditional_models  
+modelsummary::modelsummary(
+traditional_models,
+  coef_omit = "Intercept|W1|W2",
+  gof_omit = ".")
+
+
+```
+
+# G computation implementation
+
+I will use different ways of coding to do it just to prove that I understand the concept. I will use the correctly specified model
+
+```{r}
+# The authors' approach
+cf_data <-   simdata |> # Duplicate the data
+  bind_rows(simdata) |> 
+  select(-A) |> # remove the observed A
+  mutate(A = c(rep(0,300), rep(1,300))) %>%  # Add the counterfactual A
+  spread_predictions(model1, model2, model3, model4) |>    # Time to predict
+  rename_with(~str_replace(.x, "model","Y_model"))
+# Get the estimates with using another model
+cf_data |> 
+# Give me my ATE
+  group_by(A) |> 
+  summarise(across(contains("Y_model"),mean)) |> 
+  pivot_longer(cols = contains("Y_model"), names_to = "model") |> 
+  group_by(model) |> 
+  mutate(estimate = round(diff(value),2)) |> 
+  distinct(model,estimate) |> 
+  ungroup()
+
+# Another way
+predictions(model4, 
+            variables = list(A=0:1)) |> tibble() |> 
+  group_by(A) |> 
+  summarise(result = mean(estimate)) |> 
+  pull(result) |> 
+  diff()
+
+# Another way
+predictions(model4, 
+            variables = list(A=0:1), by = "A") |> 
+  tibble() |> 
+  pull(estimate) |> 
+  diff()
+
+# Another way
+comparisons(model4, 
+            variables = list(A=0:1), by = T)  |> tibble()
+
+# The most concise way
+avg_comparisons(model4, variables = list(A=0:1))
+```
+
+G-computation for the 4 models
+
+```{r}
+my_models <- list(model1, model2, model3, model4)
+model_names <- paste0("G_","model",1:4)
+
+# Simple computation
+G_models <- my_models |> 
+  map(~avg_comparisons(.x, variables = list(A=0:1))) |> 
+  setNames(model_names)
+
+# Using models
+traditional <- traditional_models |> 
+  map(~tbl_regression(.x)|> 
+        modify_column_hide(columns = ci) |> 
+        modify_column_unhide(columns = std.error)) |> 
+  tbl_merge(tab_spanner = c("Model 1", "Model 2", "Model 3", "Model 4"))
+
+msm <- fixest::feglm(c(Y_model1,Y_model2,Y_model3,Y_model4) ~ A, data= cf_data) |> 
+  map(~
+        tbl_regression(.x) |> 
+        modify_column_hide(columns = ci) |> 
+        modify_column_unhide(columns = std.error)
+        ) |> 
+  tbl_merge(model_names)
+
+tbl_stack(list(traditional, msm))
+
+```
+
+```{r}
+mtcars
+predictions(mod) |> tibble()
+```
+
+```{r}
+avg_comparisons(model1, variables = list(A = 0:1))
+```
