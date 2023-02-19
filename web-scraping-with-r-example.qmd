@@ -1,0 +1,17 @@
+---
+title: "Web scraping with R"
+subtitle: "An application for measuring healthcare access"
+format: html
+editor: visual
+---
+# About
+
+In this Quarto document, I will try to apply my learning of web scraping through extracting the distance between a certain zip code and the nearest health center. The final output should be a dataset where each zip code has distance assigned to it.
+
+
+
+```{r}
+#| label: packages
+pacman::p_load(tidyverse, rvest, RSelenium, netstat)
+```
+
