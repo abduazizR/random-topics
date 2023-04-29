@@ -1,0 +1,355 @@
+---
+title: "Liklihoods"
+author: "Abdullah Abdelaziz"
+format: html
+editor: visual
+---
+# Packages
+```{r}
+pacman::p_load(tidyverse, patchwork)
+```
+
+# Likelihoods
+
+Likelihood approaches to statistical inferences can be seen as a third way to draw inferences from data, separate from Frequentist and Bayesian statistics. At the same time, likelihood functions are an important part of Bayesian statistics, so a better understanding of likelihoods will also make it easier to understand Bayesian statistics later. Where Frequentist and Bayesian statistics only allow probability-based inferences, the likelihood approach suggests that inference is possible directly from the likelihood function.
+
+We can use likelihood functions to say something about unknown quantities. Let's imagine you flip a coin 10 times, and it turns up heads 8 times. What is the true probability (which we will indicate by the Greek letter theta, θ) of this coin landing on heads
+
+The binomial probability of observing x successes in n studies is:
+
+$$
+P(\theta;x) = \frac{n!}{x!(n-x)!} \times \theta^x \times (1-\theta)^{n-x}
+$$
+
+where θ is the probability of a success. The first term indicates the number of possible combinations of results (e.g., you could start out with eight successes, end with eight successes, or any of the other possible combinations), which is multiplied by the probability of observing one success in each of the trials, which is then multiplied by the probability of observing no success in the remaining trials.
+
+## Question 1
+
+Let's assume you expect this is a fair coin. What is the binomial probability of observing 8 heads out of 10 coin flips, when θ = 0.5?
+
+```{r}
+binomial_liklihood <- function(n, x, p){
+  result <- factorial(n)/(factorial(x)*factorial(n-x))*(p^x)*((1-p)^(n-x))
+  return(result)
+}
+
+# Let's answer question 1
+binomial_liklihood(n = 10, x = 8, p = 0.5)
+
+# The same can be done with dbinom()
+dbinom(size = 10, x = 8, prob = 0.5)
+```
+
+Let's assume we don't have any other information about this coin. (You might believe most coins are fair; such priors will be discussed when we talk about Bayesian statistics). The equation $P(θ;x)$ gives the probability of observing $x$ successes from $n$ trials when a coin's probability of success is $θ$. Based on the data we have observed, we can ask the question: which value of $θ$ will make the observed data **most likely**?
+
+To answer this question, we can plug in the values for $x$ and $n$ into $P(θ)$ and then find which value of $θ$ maximizes this function. Fisher calls this **maximum likelihood estimation**, and published it when he was 22 as a third year undergraduate (in addition to contributing to a huge number of areas in statistics, he is also one of the greatest biologists since Darwin). Since $θ$ can be any value between 0 and 1, we can plot all values in what is known as the likelihood curve, so we can see the maximum more easily.
+
+```{r}
+generate_liklihood_plot <- function(x, n,length){
+  tibble(
+    theta = seq(0,1, len = length),
+    like =dbinom(x=x, size=n, prob = theta)
+  ) |> 
+    ggplot(aes(x=theta, y = like)) + geom_line()+
+  xlab(expression(theta)) + ylab("Liklihood")
+}
+
+generate_liklihood_plot(x = 8, n = 10, length = 1000)
+
+```
+
+All possible values for $θ$ from 0 to 1 are on the x-axis, and the likelihood function $P(θ;x)$ is on the y-axis. It should not be surprising that the best guess we have is that the true parameter is 8 out of 10, or $θ = 0.8$, with a likelihood function value of 0.30 (the highest point on the y-axis). It [is important to know that the value of the likelihood itself has no meaning in isolation]{.underline}. In this sense, it differs from a probability.
+
+The likelihood of 0.30 does not mean much in isolation, but we can compare likelihoods of the same curve, and compare different values of $θ$. You can read off any other value for any other $θ$, and see that for low values (e.g., 0.2), our observed data are not very likely.
+
+Probabilities and likelihoods are related, but different. Note how the equation for P involves both information about the data (x, n) and information about the parameter $θ$.
+
+To compute a probability, we view $θ$ as fixed (for instance, for a fair coin, we plug in $θ$=.5) and then estimate the probability of different outcomes (x, n). The resulting function is the probability mass function.
+
+To compute likelihood, we instead view our data as fixed (e.g., observing 5 heads out of 10 coin tosses), and we view P as a function of theta, estimating the value that maximizes the likelihood of our particular sample.
+
+Likelihoods are an example of statistical inference: We have observed some data, and we use this data to draw an inference about different parameters. More formally, the likelihood function is the (joint) density function evaluated at the observed data. Likelihood functions can be calculated for many different models (binomial distributions, normal distributions, etc., see Millar, 2011).
+
+Q2: The likelihood curve rises up and falls down, except at the extremes, when 0 heads or only heads are observed. Open the PlotLikelihood.R script, and plot the likelihood curves for 0 heads by changing the number of successes in line 3 to 0, and running the script. What does the likelihood curve look like?
+
+C)  The curve starts at its highest point at θ = 0, and then the likelihood decreases as θ increases.
+
+```{r}
+generate_liklihood_plot(x = 0, n = 10, length = 1000)
+```
+
+Likelihoods can easily be combined. Imagine we have two people flipping the same coin independently. One person observes eight heads out of 10 flips, and the other observes 4 heads out of 10 flips. You might believe that this should give the same likelihood curve as one person flipping a coin 20 times, and observing 12 heads, and indeed, it does. In the plot below, all likelihood curves are standardized by dividing the curve by the maximum of each likelihood curve. This is why all curves now have a maximum of 1, and we can more easily compare different likelihood curves.
+
+The curve on left is for 4 out of 10 heads, the one on the right is for 8 out of 10 heads. The black dotted curve in the middle is for 12 out of 20 heads. The red curve, exactly underneath the 12 out of 20 heads curve, is calculated by multiplying the likelihood curves: L(θcombined) = L(θ = 0.8) \* L(θ = 0.4). In the plot below, you can see that multiplying the likelihood curves for 4/10 heads and 8/10 heads (the red line) gives the same likelihood curve as that of 12/20 heads (black dotted line).
+
+```{r}
+
+x <- generate_liklihood_plot(x = 4, n = 10, length = 1000)
+y <- generate_liklihood_plot(x = 8, n = 10, length = 1000)
+z <- generate_liklihood_plot(x = 12, n = 20, length = 1000)
+
+bind_rows(
+  x$data |> mutate(group ="4/10"),
+  y$data |> mutate(group ="8/10"),
+  z$data |> mutate(group ="12/20")
+) |> 
+  # standardize the liklihood curves
+  group_by(group) |> 
+  mutate(like = like/max(like)) |> 
+  ggplot(aes(x = theta, y = like, color = group)) +
+  geom_line()
+
+bind_rows(
+  x$data |> mutate(group ="4/10"),
+  y$data |> mutate(group ="8/10"),
+  z$data |> mutate(group ="12/20")
+) |> 
+  pivot_wider(names_from = group, values_from = like) |> 
+  mutate(multiplication = `4/10`*`8/10`) |> 
+  pivot_longer(cols = `4/10`:multiplication, names_to = "group", values_to = "like") |> 
+    # standardize the liklihood curves
+  group_by(group) |> 
+  mutate(like = like/max(like)) |> 
+  ggplot(aes(x = theta, y = like, color = group)) +
+  geom_line(position=position_dodge(width=0.003)) # to avoid overlapping
+```
+
+In the plot below, 10, 100, and 1000 coin flips are plotted, which yield 5, 50, and 500 heads, respectively. The likelihood curves are again standardized to make them more easily comparable. As the sample size increases, the curves become more narrow (the dashed line is for n = 10, the dotted line is for n = 100, and the solid line is for n = 1000). This means that as the sample size increases, our data become increasingly less likely under any other distribution but one where the true value is is θ=0.5. Or, in other words, we have collected increasingly strong evidence for θ = 0.5, compared to most other possible values.
+
+```{r}
+a <- generate_liklihood_plot(x = 5, n = 10, length = 1000) # 5/10
+b <- generate_liklihood_plot(x = 50, n = 100, length = 1000) # 50/100
+c <- generate_liklihood_plot(x = 500, n = 1000, length = 1000) # 500 /1000
+
+a+b+c
+```
+
+We can use the likelihood to compare possible values of $θ$. For example, we might believe the coin we flipped was fair, even though we flipped eight out of ten heads. A fair coin will have $θ = 0.5$, while we observed $θ = 0.8$. The likelihood tells us the relative preference we might have for different possible parameters. How much more likely is our observed data under the hypothesis that this is an unfair coin that will on average give heads 80% of the time, compared to the alternative theory that this is a fair coin which should give heads 50% of the time?
+
+We can calculate the likelihood ratio:
+
+$$\frac{L(\theta=0.8)}{L(\theta=0.5)}$$
+
+```{r}
+generate_liklihood_plot(x = 8, n = 10, length = 1000)
+```
+
+```{r}
+generate_liklihood_plot(x = 4, n=10, length = 1000)
+dbinom(5,10, prob = 0.5)/dbinom(5,10, prob = 0.4)
+dbinom(50,100, prob = 0.5)/dbinom(50,100, prob = 0.4)
+dbinom(500,1000, prob = 0.5)/dbinom(500,1000, prob = 0.4)
+dbinom(50,100, prob = 0.3)/dbinom(50,100, prob = 0.8)
+
+#Calculate the likelihood ratio----
+n<-280 #set total trials
+x<-143 #set successes
+H0 <- .5 #specify one hypothesis you want to compare with the likihood ratio
+H1 <- 143/280 #specify another hypothesis you want to compare with the likihood ratio (you can use 1/20, or 0.05)
+dbinom(x,n,H0)/dbinom(x,n,H1) #Returns the likelihood ratio of H0 over H1
+dbinom(x,n,H1)/dbinom(x,n,H0) #Returns the likelihood ratio of H1 over H0
+
+```
+
+```{r}
+bind_rows(
+generate_liklihood_plot(x = 0, n=3, length = 1000)$data,
+generate_liklihood_plot(x = 1, n=3, length = 1000)$data,
+generate_liklihood_plot(x = 2, n=3, length = 1000)$data,
+generate_liklihood_plot(x = 3, n=3, length = 1000)$data) |> 
+  mutate(x = rep(c("0/3", "1/3", "2/3", "3/3"), each =1000)) |> 
+  ggplot() + geom_line(aes(x = theta, y = like, color = as_factor(x)))
+```
+
+
+# Bayesian stat
+
+
+```{r}
+# Bayes factor (posterior distribution at theta = 0.5 divided by the prior distribution at theta = 0.5)
+dbeta(0.5,11,11)/dbeta(0.5,1,1)
+```
+
+
+```{r}
+H0<-0.5 #Set the point null hypothesis you want to calculate the Bayes Factor for
+n<-10 #set total trials
+x<-0 #set successes
+aprior<-10 #Set the alpha for the Beta distribution for the prior
+bprior<-10 #Set the beta for the Beta distribution for the prior
+
+alikelihood<-x+1 #Calculate the alpha for the Beta distribution for the likelihood
+blikelihood<-n-x+1 #Calculate the beta for the Beta distribution for the likelihood
+aposterior<-aprior+alikelihood-1 #Calculate the alpha for the Beta distribution for the posterior
+bposterior<-bprior+blikelihood-1 #Calculate the beta for the Beta distribution for the posterior
+
+theta<-seq(0,1,0.001) #create theta range from 0 to 1
+#png(file="PriorLikelihoodPosterior.png",width=3000,height=3000, res = 500)
+prior <- dbeta(theta, aprior, bprior)
+likelihood <- dbeta(theta, alikelihood, blikelihood)
+posterior <- dbeta(theta, aposterior, bposterior)
+plot(theta, posterior, ylim=c(0, 15), type = "l", lwd = 3, xlab = bquote(theta), ylab = "Density", las = 1)
+lines(theta, prior, col="grey", lwd = 3)
+lines(theta, likelihood, lty = 2, lwd = 3, col="dodgerblue")
+BF10<-dbeta(H0, aposterior, bposterior)/dbeta(H0, aprior, bprior)
+points(H0,dbeta(H0, aposterior, bposterior), pch = 19)
+points(H0,dbeta(H0, aprior, bprior), pch = 19, col="grey")
+segments(H0, dbeta(H0, aposterior, bposterior), H0, dbeta(H0, aprior, bprior), lty=2)
+title(paste('Bayes Factor:',round(BF10,digits=2)))
+#dev.off()
+```
+
+
+```{r}
+n<-10 #set total trials
+x<-0 #set successes
+aprior<-10 #Set the alpha for the Beta distribution for the prior
+bprior<-10 #Set the beta for the Beta distribution for the prior
+
+ymax<-10 #set max y-axis
+
+alikelihood<-x+1 #Calculate the alpha for the Beta distribution for the likelihood
+blikelihood<-n-x+1 #Calculate the beta for the Beta distribution for the likelihood
+aposterior<-aprior+alikelihood-1 #Calculate the alpha for the Beta distribution for the posterior
+bposterior<-bprior+blikelihood-1 #Calculate the beta for the Beta distribution for the posterior
+
+theta<-seq(0,1,0.001) #create theta range from 0 to 1
+#png(file="BinomialPosteriorMean.png",width=4000,height=4000, res = 500)
+prior <- dbeta(theta, aprior, bprior) #deterine prior distribution
+likelihood <- dbeta(theta, alikelihood, blikelihood) #determine likelihood distribution
+posterior <- dbeta(theta, aposterior, bposterior) #determine posterior distribution
+plot(theta, posterior, ylim=c(0, ymax), type = "l", lwd = 3, xlab = bquote(theta), ylab = "Density", las = 1) #draw posterior distribution
+lines(theta, prior, col="grey", lwd = 3) #draw prior distribution
+lines(theta, likelihood, lty = 2, lwd = 3, col="dodgerblue") #draw likelihood distribution
+LL<-qbeta(.025,aposterior, bposterior) #calculate lower limit credible interval
+UL<-qbeta(.975,aposterior, bposterior) #calculate upper limit credible interval
+abline(v = aposterior/(aposterior+bposterior)) #draw line mean
+abline(v = LL, col="grey",lty=3) #draw line lower limit
+abline(v = UL, col="grey",lty=3) #draw line upper limit
+polygon(c(theta[theta<LL],rev(theta[theta<LL])),c(posterior[theta<LL], rep(0,sum(theta<LL))),col="lightgrey",border=NA)
+polygon(c(theta[theta>UL],rev(theta[theta>UL])),c(posterior[theta>UL], rep(0,sum(theta>UL))),col="lightgrey",border=NA)
+title(paste('Mean posterior:',round((aposterior/(aposterior+bposterior)),digits=5),", 95% Credible Interval:",round(LL,digits=2),";",round(UL,digits=2)))
+#dev.off()
+
+library(binom)
+binom.bayes(x, n, type = "central", prior.shape1 = aprior, prior.shape2 = bprior)
+binom.bayes(x, n, type = "highest", prior.shape1 = aprior, prior.shape2 = bprior)
+```
+
+
+```{r}
+#Calculate the likelihood ratio----
+n<-13 #set total trials
+x<-8 #set successes
+H0 <- .5 #specify one hypothesis you want to compare with the likihood ratio
+H1 <- 0/13 #specify another hypothesis you want to compare with the likihood ratio (you can use 1/20, or 0.05)
+dbinom(x,n,H0)/dbinom(x,n,H1) #Returns the likelihood ratio of H0 over H1
+dbinom(x,n,H1)/dbinom(x,n,H0) #Returns the likelihood ratio of H1 over H0
+
+theta<- seq(0,1,len=100) #create theta variable, from 0 to 1
+like <- dbinom(x,n,theta)
+#png(file="LikRatio.png",width=4000,height=3000, , units = "px", res = 900)
+plot(theta,like,type='l',xlab=expression(theta), ylab='Likelihood', lwd=2)
+points(H0,dbinom(x,n,H0))
+points(H1,dbinom(x,n,H1))
+segments(H0, dbinom(x,n,H0), x/n, dbinom(x,n,H0), lty=2, lwd=2)
+segments(H1, dbinom(x,n,H1), x/n, dbinom(x,n,H1), lty=2, lwd=2)
+segments(x/n, dbinom(x,n,H0), x/n, dbinom(x,n,H1), lwd=2)
+title(paste('Likelihood Ratio H0/H1:',round(dbinom(x,n,H0)/dbinom(x,n,H1),digits=2)," Likelihood Ratio H1/H0:",round(dbinom(x,n,H1)/dbinom(x,n,H0),digits=2)))
+```
+
+
+
+# Optional stopping
+```{r}
+#|label: plot single value over time
+n<-200 #total number of datapoints (per condition) you are willing to collect after initial 10
+
+D<-0.3 #True effect size (Keep SD below to 1, otherwise, this is just mean dif, not d)
+SD<-1 #Set True standard deviation.
+
+p<-numeric(n) #store p-values
+x<-numeric(n) #store x-values
+y<-numeric(n) #store y-values
+
+n<-n+10 #script calculates p-values after 10 people in each condition, so add 10 to number of datapoints
+
+for(i in 10:n){ #for each simulated participants after the first 10
+  x[i]<-rnorm(n = 1, mean = 0, sd = SD)
+  y[i]<-rnorm(n = 1, mean = D, sd = SD)
+  z<-t.test(x[1:i],y[1:i], var.equal=TRUE) #perform the t-test
+  p[i]<-z$p.value 
+}
+
+p<-p[10:n] #Remove forst 10 empty p-values
+
+#Create the plot
+#png(file="p-value_over_time.png",width=4000,height=2000, , units = "px", res = 500)
+plot(0, col="red", lty=1, lwd=3, ylim=c(0,1), xlim=c(10,n), type="l", xlab='sample size', ylab='p-value', cex.lab=1, cex.axis=1, xaxt = "n")
+lines(p, lwd=2)
+abline(h=0.05, col="darkgrey", lty=2, lwd=2) #draw ine at p = 0.05
+axis(1, at=seq(0, n-10, by=(n-10)/4), labels = seq(10, n, by=(n-10)/4))
+#dev.off()
+
+min(p) #Return lowest p-value from all looks
+cat("The lowest p-value was observed at sample size",which.min(p)+10) #Return the sample size at which the p-value was smallest
+cat("The p-value dropped below 0.05 for the first time as sample size",which(p<0.05)[1]+10) #Return the sample size at which the p-value dropped below 0.05 for the first
+```
+
+
+
+
+```{r}
+# Optional stopping simulation
+
+N<-100 #total number of datapoints (per condition) you are willing to collect
+Looks<-5 #set number of looks at the data
+nSim<-50000 #number of simulated studies
+alpha<-0.0158 #set alpha
+
+D<-0 #True effect size (must be 0 when simulating Type 1 errors)
+
+#Take care of some settings
+options(scipen=100, digits=4) #disable scientific notation for numbers
+LookN<-ceiling(seq(0,N,N/Looks)) #Determine at which N's to look
+LookN<-LookN[-1] #remove look at 0
+LookN<-LookN[LookN > 2] #Remove looks at N of 1 or 2 (not possible with t-test)
+Looks<-length(LookN) #if looks are removed, change number of looks
+matp<-matrix(NA, nrow=nSim, ncol=Looks) #Matrix for p-values at sequential tests
+SigSeq<-numeric(Looks) #Variable to store final p-values
+OptStop<-numeric(nSim) #variable to store positions of optional stopping
+p<-numeric(nSim) #Variable to save optional stopping p-values
+
+#Loop data generation for each study, then loop to perform a test for each N 
+for (i in 1:nSim){
+  x<-rnorm(n = N, mean = 0, sd = 1)
+  y<-rnorm(n = N, mean = D, sd = 1)
+  for (j in 1:Looks){
+  matp[i,j]<-t.test(x[1:LookN[j]],y[1:LookN[j]], var.equal=TRUE)$p.value #perform the t-test, store
+  }
+  cat('Loop', i, 'of', nSim,'\n')
+}
+
+#Save Type 1 error rate for each look
+for (i in 1:Looks){
+  SigSeq[i] <- sum(matp[,i]<alpha)
+}
+
+#Get the positions at which are stopped, and then these p-values
+for (i in 1:nSim){
+  OptStop[i] <- min(which(matp[i,]<alpha))
+}
+OptStop[is.infinite(OptStop)] <- Looks #If nothing significant, take last p-value (fixes error warning)
+for (i in 1:nSim){
+  p[i] <- matp[i,OptStop[i]]
+}
+
+breaks<-100
+hist(p, breaks=breaks,col="grey")
+abline(h=nSim/breaks, col = "red", lty=3)
+
+#Return Type 1 error rates for each look, and the the Type 1 error rate when only reporting the lowest p-value over all looks
+cat("Type 1 error rates for look 1 to", Looks,":", SigSeq/nSim)
+cat("Type 1 error rate when only the lowest p-value for all looks is reported:", sum(p<alpha)/nSim)
+```
+
