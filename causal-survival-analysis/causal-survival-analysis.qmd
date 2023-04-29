@@ -1,0 +1,791 @@
+---
+title: "Causal Survival Analysis"
+subtitle: "Eleanor Murray's workshop"
+author: "Abdullah Abdelaziz"
+format: html
+editor: visual
+bibliography: references.bib
+---
+
+# About
+
+I will cite something[@Hernán2010]
+
+Here I will cite something This file is an attempt to replicate Murray's paper[@murray2021]. The dataset can be found [here](https://github.com/abduazizR/CausalSurvivalAnalysisWorkshop)
+
+
+```{r}
+#| label: packages
+
+
+pacman::p_load(tidyverse, skimr, rms, survival, sandwich, lmtest, ggplot2, survminer, reshape2,janitor, here, broom, equatiomatic, gtsummary, flextable, gtsummary, patchwork,
+               tidymodels, modelr)
+
+```
+
+```{r}
+#| label: data
+
+trial1 <- read_csv("R/trial1.csv")
+
+trial1 <- trial1 |> 
+  select(-...1)
+
+trial1
+```
+
+# Data description
+
+```{r}
+knitr::include_graphics(path = "images/image-731979904.png")
+```
+
+# Data exploration
+
+```{r}
+#| label: exploration
+trial1 |> 
+  select(contains("adh"))
+
+trial1 |> 
+  select(ends_with("_b"))
+
+trial1 |> 
+  skim()
+```
+
+# Question 1
+
+```{r}
+trial1 |> nrow()
+
+```
+
+# Question 2
+
+```{r}
+trial1 |> 
+  distinct(simID)
+```
+
+# Question 3
+
+```{r}
+trial1 |> 
+  filter(visit >= 10) |> 
+  distinct(simID)
+```
+
+# Question 4
+
+```{r}
+trial1 |> 
+  select(simID, rand) |> 
+  distinct() |> 
+  count(rand)
+```
+
+# Question 5
+
+```{r}
+trial1 |> 
+  select(simID,death,rand) |> 
+  group_by(simID) |> 
+  mutate(death_status = max(death)) |> 
+  ungroup() |> 
+  distinct(simID, rand, death_status) |> 
+  gtsummary::tbl_cross(rand,death_status, percent = "row")
+
+```
+
+# KM curves
+
+## Question 1
+
+```{r}
+km_data <-
+  trial1 |>
+    group_by(simID) |> 
+    mutate(
+      maxVisit = max(visit),
+      death_status = max(death)
+      ) |> 
+  ungroup() |> 
+  distinct(simID, maxVisit, death_status, rand)
+
+km_object <-   survfit(Surv(maxVisit, death_status) ~ rand, data = km_data)
+summary(km_object)
+km_object |> tidy() |> 
+  flextable::flextable()
+
+ITT_km_plot <- 
+  ggsurvplot(km_object, 
+           data = km_data,
+           conf.int=F,
+           legend.labs = c("Placebo", "Treated"),
+           ylim = c(0.7, 1),
+           surv.scale = 'percent',
+           xlab = "Number of Visits",
+           title = "Kaplan-Meier Curve showing survival in each trial arm",
+           risk.table = TRUE,
+           break.time.by=2,
+           ggtheme = theme_bw())
+
+ITTkm_plot2 <- 
+  ggsurvplot(km_object, 
+           data = km_data,
+           conf.int=F,
+           fun = "event", # To plot 1-KM
+           legend.labs = c("Placebo", "Treated"),
+           # ylim = c(0.7, 1),
+           surv.scale = 'percent',
+           xlab = "Number of Visits",
+           title = "1-KM Curve showing survival in each trial arm",
+           risk.table = TRUE,
+           break.time.by=2,
+           ggtheme = theme_bw())
+
+# Save the plots
+pdf("ITT_km_plot.pdf", width = 15, height = 12)
+print(ITT_km_plot, newpage = FALSE)
+dev.off()
+
+
+pdf("ITT_km_plot2.pdf", width = 15, height = 12)
+print(ITTkm_plot2, newpage = FALSE)
+dev.off()
+
+```
+
+## Question 2
+
+Answer: The numbers are exactly the same as those in the 2x2 table because we don't have loss to follow up in the data.
+
+## Question 3
+
+```{r}
+# Run the log-rank test
+survdiff(Surv(maxVisit, death_status) ~ rand, data = km_data)
+# Show it on the plot
+ggsurvplot(km_object, 
+           data = km_data,
+           conf.int=F,
+           pval = T, # to print p value with the plot
+           pval.method = T, # to show the p value of the log rank test
+           fun = "event",
+           legend.labs = c("Placebo", "Treated"),
+           # ylim = c(0.7, 1),
+           surv.scale = 'percent',
+           xlab = "Number of Visits",
+           title = "1-KM Curve showing survival in each trial arm",
+           risk.table = TRUE,
+           break.time.by=2,
+           ggtheme = theme_bw())
+```
+
+# Estimate ITT with models
+
+## Unadjusted HR
+
+```{r}
+#| label: Unadjusted HR with Cox
+cox_data_unadj <- km_data
+cox_data_unadj
+# Build the model
+unadj_cox_model <- coxph(Surv(maxVisit, death_status) ~ rand, data = cox_data_unadj)
+
+# Tidy it with confidence intervals
+unadj_cox_model |> 
+  tidy(conf.int = T, exponentiate = T)
+
+# Present it with gtsummary
+unadj_cox_model |> 
+  tbl_regression(exp = T) 
+
+```
+
+```{r}
+#| label: Unadjusted HR with pooled logistic regression
+
+# Navigate the data to see what you will need
+trial1 |> 
+  select(simID, rand, visit, death)
+
+# Build the model  (try quadratic; try splines, etc)
+# We add a term for the time of measurement (which is the variable visit here) => to make our intercept vary by time which is essential to have an estimate of base-line risk that's changing over time regardless the exposure
+## quadratic
+unadj_pooled_logistic_quadratic <- glm(death ~ rand + I(visit^2),
+    family = binomial(),
+    data = trial1
+    )
+unadj_pooled_logistic_rcs <- glm(death ~ rand + rcs(visit),
+    family = binomial(),
+    data = trial1
+    )
+# Make it more visually appealing
+list(unadj_pooled_logistic_quadratic, unadj_pooled_logistic_rcs) |> 
+  map(~tidy(.x,exp = T, conf.int = T)) |> 
+  setNames(c("Quadratic", "rcs")) |> 
+  bind_rows(.id = "id") |> 
+  filter(term == "rand")
+
+# Correct for SE and make it visually appealing
+list(unadj_pooled_logistic_quadratic, unadj_pooled_logistic_rcs) |> 
+  map(
+      ~coeftest(.x, vcov = vcovHC, type = "HC1")
+      ) |> 
+  map(
+    ~tidy(.x, conf.int = T)
+  ) |> 
+  setNames(c("Quadratic", "rcs")) |> 
+  bind_rows(.id = "id") |> 
+  mutate(
+    across(
+      c(estimate, contains("conf")), exp
+    )
+  ) |> 
+  filter(term == "rand")
+```
+
+```{r}
+#| label: Compare the two approaches
+unadjusted_itt_estimates <- 
+  list(logisitc = unadj_pooled_logistic_quadratic, cox =unadj_cox_model) |> 
+  map(tbl_regression) |> 
+  tbl_merge()
+unadjusted_itt_estimates
+
+```
+
+## Adjusted HR
+
+```{r}
+#| label: Cox
+cox_data_adj <-
+trial1 |> 
+  group_by(simID) |> 
+  mutate(
+  maxVisit = max(visit),
+  death_status = max(death)
+  ) |> 
+  ungroup() |> 
+  select(simID, maxVisit, death_status, rand, # id, time, event, group assignment
+         ends_with("_b"), mi_bin, -adhr_b # baseline covariates
+         ) |> 
+  distinct()
+
+
+# Build the model
+adj_cox_model <- coxph(Surv(maxVisit, death_status) ~ .-simID, data = cox_data_adj, method='breslow')
+
+# Tidy it with confidence intervals
+adj_cox_model |> 
+  tidy(conf.int = T, exponentiate = T)
+
+# Present it with gtsummary
+adj_cox_model |> 
+  tbl_regression(exp = T)
+```
+
+```{r}
+#| label: Pooled logistic regression
+# Navigate the data to see what you will need
+pooled_logit_data_itt <- trial1 |> 
+  select(
+    simID, death, rand, visit, # id, time, event, group assignment
+         ends_with("_b"), mi_bin, -adhr_b # baseline covariates
+  )
+
+# Build the model  (try quadratic; try splines, etc)
+## quadratic
+adj_pooled_logistic_quadratic <- 
+  glm(death ~ rand + I(visit^2)+. -simID,
+    family = binomial(),
+    data = pooled_logit_data_itt
+    )
+adj_pooled_logistic_rcs <- 
+  glm(death ~ rand + rcs(visit)+. -simID,
+    family = binomial(),
+    data = pooled_logit_data_itt
+    )
+
+# Make it more visually appealing
+# list(adj_pooled_logistic_quadratic, adj_pooled_logistic_rcs) |> 
+#   map(~tidy(.x, conf.int = T)) |> 
+#   setNames(c("Quadratic", "rcs")) |> 
+#   bind_rows(.id = "id") |> 
+#   filter(term == "rand")
+
+# Correct for SE and make it visually appealing
+list(adj_pooled_logistic_quadratic, adj_pooled_logistic_rcs)|> 
+  map(
+      ~coeftest(.x, vcov = vcovHC, type = "HC1")
+      ) |> 
+  map(
+    ~tidy(.x, conf.int = T)
+  ) |> 
+  setNames(c("Quadratic", "rcs")) |> 
+  bind_rows(.id = "id") |> 
+  mutate(
+    across(
+      c(estimate, contains("conf")), exp
+    )
+  ) |> 
+  filter(term == "rand")
+
+adj_pooled_logistic_quadratic
+```
+
+```{r}
+#| label: Compare all approaches
+all_itt_estimates <- 
+  list(unadj_logistic = unadj_pooled_logistic_quadratic, 
+       unadj_cox = unadj_cox_model,
+       adj_logistic = adj_pooled_logistic_quadratic, 
+       adj_cox = adj_cox_model)
+
+all_itt_estimates_tab <- all_itt_estimates |> 
+  map(~tbl_regression(.x, include = "rand")) |> 
+  tbl_merge(tab_spanner = names(all_itt_estimates))
+
+
+all_itt_estimates_tab
+
+```
+
+# Marginal effects
+
+We cannot use Cox model here because the baseline hazards are unknown so we cannot standardize survival curves. We are not accounting for any time-varying elements here. We are still estimating ITT but with standardization instead of regression adjustment.
+
+```{r}
+#|label: estimation
+# Navigate the data to see what you will need
+pooled_logit_data_itt 
+
+# Step 1:Build the model  (I will just stick to quadratic this time)
+adj_pooled_logistic_marginal <- 
+  glm(death ~ rand + I(visit^2)+ rand*visit + rand*I(visit^2)+. -simID,
+    family = binomial(),
+    data = pooled_logit_data_itt
+    )
+
+# Step 2: Simulate data for treated and placebo
+## For some reason, we need to simulate that everybody had 14 visits (i.e. attended all the visits)
+simulated_data <-
+  pooled_logit_data_itt |> # Pull the ITT data
+  expand(simID, visit, rand) |>  # This creates all the possible combination between visit and simID (cloning)
+  left_join(pooled_logit_data_itt # Get the covariate information by rejoining the data
+            ) |> 
+  # For each simID, we want to have the same values of the covariates and they don't vary because they are measured at baseline
+  group_by(simID) |> 
+  mutate(
+    across(death:mi_bin,
+           ~ifelse(is.na(.x), max(.x, na.rm = T),.x)
+           )
+  ) |> 
+  ungroup() |> 
+  # Use the model to predict the counterfactual probability of death
+  gather_predictions(adj_pooled_logistic_marginal, type = "response") |> 
+  # Calculate the survival
+  mutate(p = 1-pred) |> 
+  # Calculate the cumulative survival across visits for each simID by treatment group
+  group_by(simID,rand) |> 
+  mutate(s = cumprod(p)) |> 
+  ungroup() |> 
+  # Calculate the mean survival across individuals at each visit by the treatment group
+  group_by(rand, visit) |> 
+  summarise(mean_survival = mean(s)) |> 
+  ungroup() |> 
+  # Edit results data frame to reflect that our estimates are for the END of the interval [t, t+1)
+  # Add a row for each of Placebo and Treated where survival at time 0 is 1.
+  mutate(visit = visit+1) |> 
+  add_row(
+    visit = c(0,0),
+    rand = c(0,1),
+    mean_survival = c(1,1),
+    .before = 1
+  )
+```
+
+## Question 1
+
+What is the average risk difference at the end of follow-up? What is the average intention-to- treat hazard ratio at the end of follow-up? What is the average cumulative incidence ratio at the end of follow-up?
+
+```{r}
+
+# Present the result
+## Method 1
+simulated_data |> 
+  arrange(visit, rand) |> 
+  group_by(visit) |> 
+  mutate(RD = mean_survival - lead(mean_survival),
+         RD = round(RD,2)) |> 
+  ungroup() |> 
+  distinct(visit, RD) |> 
+  na.omit()
+
+
+## Method 2: Include hazard ratios and CIR
+simulated_data  |> 
+  pivot_wider(names_from = rand, values_from = mean_survival,names_prefix = "rand_") |> 
+  # We add "1-" because we are estimating the risk of death not survival
+  mutate(
+    RD = (1-rand_1) - (1-rand_0),
+    hazard = -log(rand_1)/-log(rand_0), # Hazard is given by negative log of survival probability generated from KM
+    CIR = (1-rand_1)/ (1-rand_0)
+  ) |> 
+  mutate(HR = lag(cummean(lead(hazard))),
+         CIR = lag(cummean(lead(CIR)))
+         ) |> 
+  mutate(across(rand_0:HR, ~round(.x,3))) |> 
+  # What is the average risk difference at the end of follow-up? What is the average intention-to-treat hazard ratio at the end of follow-up? What is the average cumulative incidence ratio at the end of follow-up?
+  filter(visit == 15) |> 
+  select(RD, CIR, HR)
+```
+
+Remember hazard ratios can be interpreted in the same way as rate ratio and both rate ratios and hazard ratios approximate risk ratio when there is no loss to follow up.
+
+## Question 2
+
+How does the average hazard ratio compare with the conditional unadjusted intention-to-treat hazard ratio? What about the conditional covariate adjusted hazard ratio?
+
+```{r}
+all_itt_estimates |>  
+  map(~tbl_regression(.x, include = "rand", exponentiate = T)) |> 
+  tbl_merge(tab_spanner = names(all_itt_estimates))
+```
+
+```{r}
+#|label: Adjusted survival curves
+simulated_data |> 
+  ggplot(aes(x = visit, y = mean_survival, color = as_factor(rand))) + 
+  geom_line() + 
+  geom_point() +
+  xlab("Number of Visits") +
+  scale_x_continuous(limits = c(0, 15), breaks=seq(0,15,2)) +
+  ylab("Probability of Survival") +
+  ggtitle("Survival Curves Standardized for Baseline Covariate Distribution") +
+  labs(colour="Treatment Arm") +
+  theme_bw() +
+  theme(legend.position="bottom")
+```
+
+# Estimate per-protocol effects
+
+```{r}
+# Step 1: Data preparation -> this took me 8 hours to figure out :(
+trial1_per_protocol_effects <-
+  trial1%>%
+  group_by(simID) |> 
+  # Find the first visit in which non-adherence occurred and attribute that to the visit before. If a simID had non adherence at visit 0, we will not attribute that to a previous visit
+  mutate(first_switch = first(visit[adhr ==0])-1) |> 
+
+  # Find the first visit in which death occurred
+  mutate(death_visit = first(visit[death ==1])
+         # death_at_anytime = max(death) == 1 & first_switch <
+         )  |> 
+  # Create end_visit that is the number of visit in which the earliest of non-adherence or death occurred. If neither happened, we will give it the value of 14 (the number of the final visit) because we know that there is no loss to follow up in the data
+  mutate(
+    end_visit= ifelse(
+    if_all(c(first_switch, death_visit), ~is.na(.x)),
+    14,
+    min(c(first_switch, death_visit),na.rm = T)
+    )
+  ) |> 
+  ungroup() |> 
+  # Create censoring indicator in which 0 means that person is still observed, 1 means censored, NA means not observed anymore
+  mutate(
+    censored = case_when(
+      visit < end_visit ~ 0,
+      visit == end_visit  ~ 1,
+      visit > end_visit ~ NA
+    )
+  )   |> 
+    group_by(simID) |> 
+    mutate(death_anytime = max(death)) |> 
+    ungroup() |> 
+    mutate(overall_death = 
+             case_when(
+               is.na(censored) ~ NA,
+               is.na(death_visit) ~0,
+               !is.na(death_visit) & death_visit <= end_visit ~death_anytime,
+               !is.na(death_visit) & death_visit >end_visit ~ 0
+               
+               )
+             )
+
+
+```
+
+### Question 1
+
+How many individuals in the placebo arm are adherent at baseline? How many individuals in the treatment arm are adherent at baseline?
+
+```{r}
+trial1_per_protocol_effects |> 
+  filter(visit == 0) |> 
+  tbl_cross(row = adhr_b, col = rand)
+```
+
+### Question 2
+
+Comment on the Kaplan-Meier curves you generated. After visually inspecting the data, do the curves look similar?
+
+```{r}
+# Generate KM curve for the per-protocol effect (It's different from the ITT in that we censor patients if they stopped adhering)
+per_protocol_km_data <- trial1_per_protocol_effects |> 
+  filter(visit == 0) |> 
+  select(simID, end_visit, overall_death, rand)
+
+per_protocol_km_data
+km_data
+
+per_protocol_km_object <- survfit(Surv(end_visit,overall_death) ~ rand, data = per_protocol_km_data)
+
+per_protocol_km_plot <- 
+  ggsurvplot(per_protocol_km_object, 
+           data = per_protocol_km_data,
+           conf.int=F,
+           ylim = c(0.65, 1),
+           surv.scale = 'percent',
+           legend.labs = c("Placebo", "Treatment"),
+           xlab = "Number of Visits",
+           title = "Kaplan-Meier Curve showing survival among continuous adherers, no adjustment",
+           risk.table = TRUE,
+           break.time.by=2,
+           ggtheme = theme_bw())
+
+arrange_ggsurvplots(list(ITT_km_plot, per_protocol_km_plot), 
+                    print = TRUE,
+  ncol = 2, nrow = 1, risk.table.height = 0.4)
+```
+
+### Question 3: IPW
+
+Note: Ellie created the models in data EXCLUDING the baseline visit (Not sure why) In this application, Ellie used truncated stabilized weights. Stabilized weights are composed of:
+
+-   A numerator which is the probability of adherence during the whole follow-up predicted by only baseline covariates
+
+-   A denominator which is the probability of adherence during the whole follow-up predicted by baseline covariates and time-varying covariates
+
+The models used for building weights are group-specific. In other words, for the treatment arm i.e. `rand` = 1, we will only use this arm data for the model and the same is true for `rand` = 0. We do this because the reasons for non-adherence may differ between the two arms.
+
+```{r}
+numerator_model_formula <- 
+  adhr ~ visit + I(visit^2) + adhr_b + 
+                mi_bin + NIHA_b + HiSerChol_b +
+                HiSerTrigly_b + HiHeart_b + CHF_b + 
+                AP_b + IC_b + DIUR_b + AntiHyp_b + 
+                OralHyp_b + CardioM_b + AnyQQS_b + 
+                AnySTDep_b + FVEB_b + VCD_b
+
+# Add baseline confounders and time-varying confounders + the time variable visit and I(visit^2)
+denominator_model_formula <- adhr ~ visit + I(visit^2) + adhr_b + 
+                mi_bin + NIHA_b + HiSerChol_b +
+                HiSerTrigly_b + HiHeart_b + CHF_b + 
+                AP_b + IC_b + DIUR_b + AntiHyp_b + 
+                OralHyp_b + CardioM_b + AnyQQS_b + 
+                AnySTDep_b + FVEB_b + VCD_b +
+                NIHA + HiSerChol +
+                HiSerTrigly + HiHeart + CHF +
+                AP + IC + DIUR + AntiHyp +
+                OralHyp + CardioM + AnyQQS +
+                AnySTDep + FVEB + VCD
+
+numerator_model_untreated <- glm(numerator_model_formula, 
+                                 data = trial1_per_protocol_effects |> 
+                                          filter(visit>0, rand == 0),
+                                 family = binomial)
+numerator_model_treated <- glm(numerator_model_formula, 
+                                 data = trial1_per_protocol_effects |> 
+                                          filter(visit>0, rand == 1),
+                                 family = binomial)
+
+
+denominator_model_untreated <- glm(denominator_model_formula, 
+                       data = trial1_per_protocol_effects |> 
+                                filter(visit>0, rand == 0),
+                       family = binomial)
+denominator_model_treated <- glm(denominator_model_formula, 
+                                 data = trial1_per_protocol_effects |> 
+                                          filter(visit>0, rand == 1),
+                                 family = binomial)
+
+trial1_per_protocol_effects |> 
+  # Don't use the predict() function (there is something wrong with it)
+  spread_predictions(p_adhr_numerator_untreated =numerator_model_untreated, 
+                     p_adhr_numerator_treated = numerator_model_treated,
+                     p_adhr_denominator_treated= denominator_model_treated, 
+                     p_adhr_denominator_untreated = denominator_model_untreated,
+                     type = "response") |> 
+  # Since people are either rand = 1 or rand = 0, I will create two columns to generalize this
+  # We need this because we used two different models for rand = 0 and rand = 1 groups
+  mutate(
+    p_adhr_numerator = ifelse(rand == 0, p_adhr_numerator_untreated, p_adhr_numerator_treated),
+    p_adhr_denominator = ifelse(rand == 0, p_adhr_denominator_untreated, p_adhr_denominator_treated)
+  ) |> 
+  # Delete irrelevant columns
+  select(-ends_with(c("treated","untreated"))) |> 
+  mutate(numerator = adhr*p_adhr_numerator+(1-adhr)*(1-p_adhr_numerator),
+         denominator = adhr*p_adhr_denominator+(1-adhr)*(1-p_adhr_denominator),
+         numerator = ifelse(visit == 0, 1, numerator),
+         denominator = ifelse(visit == 0, 1, denominator)
+           ) |> 
+  group_by(simID) |> 
+  mutate(x = cumprod(numerator)/cumprod(denominator)) |> 
+  mutate(y = 1/cumprod(denominator)) |> 
+  ungroup() |> 
+  skim(x, y)
+  
+```
+
+```{r}
+trial1_per_protocol_effects |> 
+  filter(visit == 0) %>%
+  survfit(Surv(end_visit, overall_death) ~ rand, data = .) |> 
+  summary()
+```
+
+# tests
+
+```{r}
+
+test <-
+  trial1%>%
+  group_by(simID) |> 
+  # Find the first visit in which non-adherence occurred and attribute that to the visit before. If a simID had non adherence at visit 0, we will not attribute that to a previous visit
+  mutate(first_switch = first(visit[adhr ==0])-1) |> 
+  # mutate(first_switch = if_else(first_switch==-1, 0,first_switch)) |> 
+  # Find the first visit in which death occurred
+  mutate(death_visit = first(visit[death ==1])
+         # death_at_anytime = max(death) == 1 & first_switch <
+         )  |> 
+  # Create end_visit that is the number of visit in which the earliest of non-adherence or death occurred. If neither happened, we will give it the value of 14 (the number of the final visit) because we know that there is no loss to follow up in the data
+  mutate(
+    end_visit= ifelse(
+    if_all(c(first_switch, death_visit), ~is.na(.x)),
+    14,
+    min(c(first_switch, death_visit),na.rm = T)
+    )
+  ) |> 
+  ungroup() |> 
+  # Create censoring indicator in which 0 means that person is still observed, 1 means censored, NA means not observed anymore
+  mutate(
+    censored = case_when(
+
+      visit < end_visit ~ 0,
+      visit == end_visit  ~ 1,
+      visit > end_visit ~ NA
+    )
+  )   |> 
+    group_by(simID) |> 
+    mutate(death_anytime = max(death)) |> 
+    ungroup() |> 
+    mutate(overall_death = 
+             case_when(
+               is.na(censored) ~ NA,
+               is.na(death_visit) ~0,
+               !is.na(death_visit) & death_visit <= end_visit ~death_anytime,
+               !is.na(death_visit) & death_visit >end_visit ~ 0
+               
+               )
+             )
+
+
+```
+
+```{r}
+both%>%
+  group_by(visit, rand)%>%
+  dplyr::summarize(mean_survival = mean(s)) |> 
+  ungroup()
+
+test |> 
+  group_by(visit, rand)%>%
+  summarise(mean_survival =mean(s)) |> 
+  ungroup() |> 
+  ggplot(aes(x = visit, y = mean_survival, color = as_factor(rand)))+ 
+  geom_point() + 
+  geom_line() +
+  xlab("Number of Visits") +
+  scale_x_continuous(limits = c(0, 15), breaks=seq(0,15,2)) +
+  ylab("Probability of Survival") +
+  ggtitle("Survival Curves Standardized for Baseline Covariate Distribution") +
+  labs(colour="Treatment Arm") +
+  theme_bw() +
+  theme(legend.position="bottom")
+
+results
+test |> 
+  group_by(visit, rand)%>%
+  summarise(mean_survival =mean(s)) |> 
+  ungroup() |> 
+  mutate(visit = visit+1) |> 
+  add_row(
+    visit = c(0,0),
+    rand = c(0,1),
+    mean_survival = c(1,1),
+    .before = 1
+  ) |> 
+  ggplot(aes(x = visit, y = mean_survival, color = as_factor(rand)))+ 
+  geom_point() + 
+  geom_line() +
+  xlab("Number of Visits") +
+  scale_x_continuous(limits = c(0, 15), breaks=seq(0,15,2)) +
+  ylab("Probability of Survival") +
+  ggtitle("Survival Curves Standardized for Baseline Covariate Distribution") +
+  labs(colour="Treatment Arm") +
+  theme_bw() +
+  theme(legend.position="bottom")
+```
+
+# How to censor and get per-protocol effects
+
+My strategy would be counting the censoring events separately and know in which visits they happened then I chose the earliest visit of them all for censoring. For lack of adherence it should be attributed to the visit before the lack of adherence first occurred
+
+```{r}
+lack_adhr_events <-
+  trial_full2 |> 
+  select(simID, adhr, visit) |> 
+  group_by(simID,adhr) |>
+  mutate(earliest_lack_adhr = ifelse(visit == min(visit) & adhr == 0,1,0)) |> 
+  ungroup() |>
+  filter(earliest_lack_adhr== 1) |> 
+  mutate(lack_adhrvisit = ifelse(visit >0, visit-1, visit)) |> 
+  select(-adhr, - visit)
+
+# admin_cens_events <- 
+  trial_full2 |> 
+  select(simID, visit, death, adhr) |> 
+  left_join(lack_adhr_events)
+  group_by(simID) |> 
+  mutate(admin_cens = ifelse(max(visit) == 14,1,0),
+         admin_cens_visit = max(visit)) |> 
+  ungroup()
+
+death_events <-  
+  trial_full2 |> 
+  select(simID, visit, death) |> 
+  mutate(death_visit = ifelse(death ==1, visit,NA))
+
+trial_full2 |> 
+  select(simID, visit) |> 
+  left_join(lack_adhr_events) |> 
+  left_join(admin_cens_events) |> 
+  left_join(death_events) |> 
+  select(-visit) |> 
+  distinct() |> 
+  group_by(simID) |> 
+  mutate(
+    across(earliest_lack_adhr:death_visit, ~max(.x, na.rm = T))
+  ) |> 
+  ungroup() |> 
+  distinct() |> 
+  mutate(
+    across(earliest_lack_adhr:death_visit, ~ifelse(.x == -Inf, NA,.x))
+  ) |> 
+  group_by(simID) |> 
+  mutate(cens = min(c(lack_adhrvisit, admin_cens_visit, death_visit), na.rm = T)) |> 
+  ungroup()
+  pivot_longer(cols = c(earliest_lack_adhr,admin_cens, death))
+```
