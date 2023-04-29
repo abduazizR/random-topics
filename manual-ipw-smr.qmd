@@ -1,0 +1,77 @@
+---
+title: "Question 2 prelim"
+format: html
+editor: visual
+---
+
+
+```{r}
+pacman::p_load(tidyverse, gtsummary, fixest)
+```
+
+```{r}
+simonib <- c(0,1)
+pharmitis <- c(0,1)
+severity <- c(0,1)
+
+q2_df <- expand_grid(severity, simonib, pharmitis) |> 
+  mutate(
+    x = c(300, 100,
+          50, 50,
+          50, 50,
+          100, 900
+          
+          )
+  ) |> 
+  uncount(x)
+
+# Unadjusted risk difference
+feols(pharmitis ~ simonib, data = q2_df)
+feglm(pharmitis ~ simonib, data = q2_df, family = poisson(link = "identity"),
+      vcov = "hetero")
+
+q2_df2 <- q2_df |> 
+  group_by(severity) |> 
+  mutate(ps = mean(simonib)) |> 
+  ungroup() |> 
+  mutate(ipw = (simonib/ps)+((1-simonib)/(1-ps))) %>% 
+  mutate(smr = ps*((simonib/ps)+((1-simonib)/(1-ps))))
+  
+
+# Check ATE
+feols(pharmitis ~ simonib, weights = ~ipw*ps,
+  data = q2_df2
+)
+
+q2_df2 |> 
+  group_by(simonib) |> 
+  summarise(x = weighted.mean(pharmitis, smr))
+  pull(x) |> diff()
+
+q2_df2 |> 
+  mutate(weighted_outcome = pharmitis*ipw) |> 
+  group_by(simonib) |> 
+  summarise(numerator = sum(weighted_outcome),
+            denom = sum(ipw)) |> 
+  mutate(z= numerator/denom) |> 
+  pull(z) |> diff()
+
+q2_df2 |> 
+  mutate(weighted_outcome = pharmitis*smr) |> 
+  group_by(simonib) |> 
+  summarise(numerator = sum(weighted_outcome),
+            denom = sum(smr)) |> 
+  mutate(z= numerator/denom) |> 
+  pull(z) |> diff()
+
+
+  mutate(y = pharmitis*(simonib/ps)) |> 
+  summarise(mean(y))
+  group_by(simonib, severity) |> 
+  mutate(x = mean(pharmitis)*ipw) |> 
+  ungroup() |> 
+  distinct(simonib, x) |> 
+  group_by(simonib) |> 
+  mutate(y = sum(x))
+```
+
