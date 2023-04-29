@@ -11,10 +11,9 @@ pacman::p_load(tidyverse, brm, logbin, gtsummary, modelsummary, easystats, broom
                skimr, boot,xtable, here, marginaleffects)
 ```
 
-
 # Source article
-https://academic.oup.com/ije/advance-article/doi/10.1093/ije/dyac220/6843281?searchresult=1
 
+https://academic.oup.com/ije/advance-article/doi/10.1093/ije/dyac220/6843281?searchresult=1
 
 ```{r}
 #| label: load and clean dataset
@@ -40,7 +39,6 @@ regression_formula <- paste0(
 ) |> as.formula()
 ```
 
-
 # Estimation approaches
 
 ## Log-Binomial methods
@@ -53,7 +51,9 @@ glm(regression_formula, data = nd2,
 As we can see, it did not converge. R asks us to supply starting values. Let's try other solutions to fix this.
 
 ### Solution 1
+
 Supply starting values from successful fit of the logistic regression
+
 ```{r}
 # Fit logistic regression
 logit_fit <- glm(regression_formula, data = nd2, 
@@ -65,11 +65,11 @@ glm(regression_formula, data = nd2,
     mustart = fitted(logit_fit),# Supply the values from the logistic regression
     ) 
 ```
+
 This also did not work. This is strange because it worked with me before with another dataset.
 
-Anyway, let's try another solution
-### Solution 2
-Use log(1-p) where p is the probabilty of the outcome as a starting value for the outcome and set the rest to zeros
+Anyway, let's try another solution \### Solution 2 Use log(1-p) where p is the probabilty of the outcome as a starting value for the outcome and set the rest to zeros
+
 ```{r}
 log_inverse_p_outcome <- log(1-sum(nd2$wtb, na.rm = T)/nrow(nd2))
 # Try fitting the log binomial model
@@ -117,8 +117,8 @@ fit.logbin.em.acc |> tbl_regression(exp = T)
 
 I tried the code in the article but it's really difficult to implement
 
-
 # riskCommunicator package
+
 https://pubmed.ncbi.nlm.nih.gov/35849588/
 
 ```{r}
@@ -142,9 +142,9 @@ binary.res$results.df
 ```
 
 # Modified Poisson regression
-https://charliemarks.com/r-tutorials/modifiedpoissonregression
-https://cscu.cornell.edu/wp-content/uploads/92_riskratios.pdf
-This is an implementation using different dataset I just want to check if I can correctly adjust standard errors on-the-go using `feglm`
+
+https://charliemarks.com/r-tutorials/modifiedpoissonregression https://cscu.cornell.edu/wp-content/uploads/92_riskratios.pdf This is an implementation using different dataset I just want to check if I can correctly adjust standard errors on-the-go using `feglm`
+
 ```{r}
 regression_formula <- wtb ~ qsmk + exercise + sex + age + race + incomeb + maritalb + 
     school + asthma + bronch
@@ -213,16 +213,12 @@ covariates <- nhefs |>
 modelform <- paste("wt_delta ~",covariates) |> as.formula()
 ```
 
-
-
 ```{r}
 #| label: Odds ratio estimation
 #' This model can be used to quantify a conditionally adjusted odds ratio with correct standard error
 modelOR <- glm(modelform,data=nhefs,family = binomial("logit"),control = list(trace = TRUE))
 tidy(modelOR, conf.int = T)[2,]
 ```
-
-
 
 ```{r}
 #| label: Risk ratio estimation using log-binomial model
@@ -266,7 +262,6 @@ feglm(modelform,data=nhefs,family = poisson("log"),vcov = sandwich) |>
   slice(2)
 ```
 
-
 ```{r}
 #| label: Risk difference estimation using poisson regression
 # This model can be used to obtain a risk difference with the Gaussian distribution or using ordinary least 
@@ -294,7 +289,6 @@ glm(modelform,data=nhefs, family = "gaussian") |>
   tidy(conf.int = T) |> 
   slice(2)
 ```
-
 
 ```{r}
 #|label: checking interaction
@@ -341,4 +335,3 @@ b <- boot(data = nhefs, statistic = bootfun, R = 2000)
 b |> tidy(conf.int = T)
 boot.ci(boot.out = b, type = "perc")
 ```
-
