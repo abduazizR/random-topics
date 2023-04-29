@@ -1,0 +1,98 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+
+
+```{r}
+library(pacman)
+pacman::p_load(tidyverse, lubridate, arrow, duckdb, dbplyr, RVerbalExpressions, renv, readxl, tictoc, beepr)
+
+```
+
+
+
+```{r}
+#Set up an arrow dataset for the detailed enrollment file
+ccaet <- open_dataset("M:/truven2/ccae/t")
+
+#As proof-of-concept, send the first 1400 rows of the enrollment file to an in-memory tibble
+continuous <- ccaet %>%
+  to_duckdb() %>% 
+  head(n=1400) %>% 
+  collect()
+
+test <- ccaet |> 
+  select(ENROLID, DTSTART, DTEND) |> 
+  filter(ENROLID %in% unique(continuous$ENROLID)) |> 
+  collect()
+
+#Using the first 1400 rows in-memory data, perform the data wrangling
+  # continuous2 <- 
+test %>% 
+  # select(ENROLID, DTSTART, DTEND) |> 
+  arrange(ENROLID, DTSTART) %>%
+  group_by(ENROLID) %>% 
+  mutate(x = lag(DTEND)+1, 
+         y = row_number()) |> 
+  mutate(
+    continuous_cov_start = if_else(
+      (DTSTART > x)|(y==1), DTSTART, NA_Date_)) |> 
+    mutate(numtoadd = if_else(!is.na(continuous_cov_start),1,0)) |> 
+   mutate(continuous_cov_sequence = cumsum(numtoadd)) |> 
+  group_by(ENROLID, continuous_cov_sequence) %>% 
+  mutate(continuous_cov_start= if_else(!is.na(continuous_cov_start), continuous_cov_start, first(continuous_cov_start))) |> 
+  filter(row_number()==n()) |> 
+  ungroup() |> 
+  filter(ENROLID == 20302) |> 
+  rename(continuous_cov_end=DTEND) %>% 
+  select(ENROLID, continuous_cov_sequence, continuous_cov_start, continuous_cov_end) %>% 
+    collect()
+
+continuous2 <- continuous2 %>% select(ENROLID, continuous_cov_sequence, continuous_cov_start,  continuous_cov_end) #note if you open up continuous 2 it looks great--rows 128 and 129 are the same enrolid but has a row for each distinct coverage period, as intended.
+
+```
+
+```{r}
+ccaea <- open_dataset("M:/truven2/ccae/a")
+
+ccaea |> 
+  filter(ENROLID == 20302) |> 
+  select(YEAR, contains("ENRIND")) |> 
+  to_duckdb()
+```
+
+```{r}
+tic()
+ccaet |> 
+  select(ENROLID, DTSTART, DTEND) |> 
+  filter(ENROLID %in% continuous$ENROLID) |>
+  to_duckdb() %>% 
+  arrange(ENROLID, DTSTART) %>%
+  group_by(ENROLID) %>%
+  mutate(
+    continuous_cov_start = if_else(
+      ((DTSTART > (lag(DTEND)+days(1)))|row_number()==1), DTSTART, NA_Date_)) %>%
+  mutate(numtoadd = if_else(!is.na(continuous_cov_start),1,0)) %>%
+  mutate(continuous_cov_sequence = cumsum(numtoadd)) %>%
+  group_by(ENROLID, continuous_cov_sequence) %>%
+  mutate(continuous_cov_start= if_else(!is.na(continuous_cov_start), continuous_cov_start, first(continuous_cov_start))) %>%
+  filter(row_number()==n()) %>%
+  rename(continuous_cov_end=DTEND) %>%
+  select(ENROLID, continuous_cov_sequence, continuous_cov_start, continuous_cov_end) %>%
+  ungroup() 
+toc()
+  arrange(ENROLID, continuous_cov_sequence) |> 
+  to_arrow()
+
+  write_parquet(
+    sink = "M:/truven2/ccae/t2/part.parquet",
+    chunk_size = 50000
+    )
+```
+
+```{r}
+read_parquet("M:/truven2/ccae/t2/part.parquet")
+```
+
