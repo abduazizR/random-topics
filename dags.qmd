@@ -53,8 +53,7 @@ Open = paths(yoshida_dag, Z= list("M1","M2"))$open
 
 ```
 
-I identified the paths successfully. Now, I need to explain this statement in Yoshida's paper:
-"To control for M1 and M2 to obtain the controlled direct effect of A, we need to account for the confounders of these variables, namely L1 and L2. However, these L1 and L2 are post-treatment confounding variables that may partly mediate the effect of A outside M1 and M2"
+I identified the paths successfully. Now, I need to explain this statement in Yoshida's paper: "To control for M1 and M2 to obtain the controlled direct effect of A, we need to account for the confounders of these variables, namely L1 and L2. However, these L1 and L2 are post-treatment confounding variables that may partly mediate the effect of A outside M1 and M2"
 
 ```{r}
 my_paths |> 
@@ -63,4 +62,10 @@ my_paths |>
 ```
 
 All the paths above would result in biased estimates. Thus we need to account for L0,L1,L2 in the analysis
+
+```{python}
+x = 5
+z = 10
+x+z
+```
 
