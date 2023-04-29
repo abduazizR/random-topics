@@ -4,15 +4,13 @@ format: html
 editor: visual
 ---
 
-
 # Running multiple linear regressions
-What if you wanted to loop over a set of univariate analsyes
 
+What if you wanted to loop over a set of univariate analsyes
 
 ```{r}
 pacman::p_load(tidyverse, broom, gtsummary)
 ```
-
 
 ```{r}
 predictors <- names(trial[1:5]) # List your covariates
@@ -25,7 +23,6 @@ map(formula_strings,
   bind_rows()
 ```
 
-
 # Running regressions by group (subgroup analysis)
 
 The chunk below shows the boring and tedious way to do it
@@ -36,7 +33,6 @@ trial |>
   lm(response~age, data = .) |> 
   tidy()
 ```
-
 
 ```{r}
 trial |> 
@@ -58,5 +54,63 @@ trial |>
        ) |> 
   unnest(model)
   
+```
+
+
+# delete
+
+```{r}
+trial_full |> 
+  mutate(adhr_pred_numerator =
+           ifelse(rand == 0, predict(numerator_model_untreated, type = "response"),
+                  predict(numerator_model_treated, type = "response"))
+           ) |> 
+  mutate(adhr_pred_denominator =
+           ifelse(rand == 0, predict(denominator_model_untreated, type = "response"),
+                  predict(denominator_model_treated, type = "response"))
+           ) |> 
+  select(simID, visit, visit2, pnum_1:adhr_pred_denominator, rand)
+```
+
+```{r}
+trial_full
+
+trial_full <- trial_full %>% 
+  mutate(
+    numCont = ifelse(rand == 1, (adhr*pnum_1 + (1-adhr)*(1-pnum_1)),(adhr*pnum_0 + (1-adhr)*(1-pnum_0)) ),
+    denCont = ifelse(rand == 1, (adhr*pdenom_1 + (1-adhr)*(1-pdenom_1)),(adhr*pdenom_0 + (1-adhr)*(1-pdenom_0))),
+    
+    numCont = ifelse(visit == 0, 1, numCont),
+    denCont = ifelse(visit == 0, 1, denCont)
+  ) %>% 
+  group_by(simID) %>% 
+  mutate(  
+    #numerator
+    k1_0 = cumprod(numCont),
+    k1_w = cumprod(denCont)
+  ) %>% 
+  dplyr::ungroup() %>% 
+  mutate(
+    stabw = k1_0/ k1_w,
+    unstabw = 1 /k1_w
+  )
+
+trial_full
+```
+
+```{r}
+numerator_model_untreated
+```
+
+```{r}
+glm(adhr ~ visit + I(visit^2) +  
+                mi_bin + NIHA_b + HiSerChol_b +
+                HiSerTrigly_b + HiHeart_b + CHF_b + 
+                AP_b + IC_b + DIUR_b + AntiHyp_b + 
+                OralHyp_b + CardioM_b + AnyQQS_b + 
+                AnySTDep_b + FVEB_b + VCD_b, 
+                                 data = trial1_per_protocol_effects |> 
+                                          filter(rand == 0),
+                                 family = binomial)
 ```
 
