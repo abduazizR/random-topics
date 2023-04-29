@@ -11,11 +11,12 @@ bibliography: references.bib
 This file is an attempt to implement g-formula in R using two examples
 
 # Snowden 2011 paper
+
 The following code is for an example from this paper [@snowden2011].
 
 ```{r}
 pacman::p_load(tidyverse, marginaleffects, tidymodels,
-               gtsummary, modelr)
+               gtsummary, modelr, skimr)
 ```
 
 #Generate simulated data set
@@ -142,11 +143,405 @@ tbl_stack(list(traditional, msm))
 
 ```
 
-```{r}
-mtcars
-predictions(mod) |> tibble()
-```
+# Ahern 2016 paper
+
+-   See [@ahern2016]
+
+## Load data
 
 ```{r}
-avg_comparisons(model1, variables = list(A = 0:1))
+ahern_data <- read_csv("data/sample_data.csv") 
+
+# Change variable types to suit what they have done in the paper
+ahern_data <- ahern_data |> 
+    mutate(across(male:race_categorical, ~as_factor(.x)))
+
+
+skimr::skim(ahern_data)
+```
+
+## Analysis 1
+
+Intervention 1: Deterministic intervention Population 1: Estimate the change in binge drinking associated with alcohol outlet density changes for the city overall
+
+### Step 1
+
+Fit multivariable regression model
+
+```{r}
+my_model <- ahern_data |> 
+  select(-neighborhood_id) %>%
+  glm(binge_drink~., family = binomial(), data = .)
+```
+
+### Step 2,3, 4 and 5
+
+Alter the exposure values in the dataset to the exposure pattern of interest
+
+```{r}
+# Under the intervention of setting the exposure in those above 100 to 100
+intervention_limit <- 100
+
+ahern_data |> 
+  bind_rows(ahern_data, .id = "intervention") |> 
+  mutate(intervention = ifelse(intervention == 1, "No","Yes")) |> 
+  # Modify the exposure people in the intervention group to reflect the change
+  mutate(alc_outlet_density = 
+           ifelse(intervention == "Yes" &alc_outlet_density > intervention_limit, intervention_limit, alc_outlet_density)
+         ) |> 
+  # group_by(intervention) |> 
+  # Use the model and generate predictions
+  gather_predictions(my_model, type = "response", .pred ="p_outcome") |> 
+  # Average those p_outcome to get the probability of binge drinking when the intervention is implemented 
+  group_by(intervention) |> 
+  summarise(avg_p_outcome_intervention = mean(p_outcome)) |> 
+  pull() |> 
+  diff()
+
+
+```
+
+### Step 6
+
+Bootstrap to get your SEs
+
+```{r}
+# Lump all the previous steps in a concise function
+# I call it ATE because we will use all the datasets in averaging and deterministic because this is the type of exposure change we make
+ATE_deterministic <- 
+  function(
+    intervention_limit = 100, 
+    split
+  ) {
+    
+    # intervention
+  intervention_limit <- intervention_limit
+  
+  # model
+  my_model <- split |> 
+  select(-neighborhood_id) %>%
+  glm(binge_drink~., family = binomial(), data = .)
+  
+  # estimation
+split |> 
+  bind_rows(split, .id = "intervention") |> 
+  mutate(intervention = ifelse(intervention == 1, "No","Yes")) |> 
+  # Modify the exposure people in the intervention group to reflect the change
+  mutate(alc_outlet_density = 
+           ifelse(intervention == "Yes" &alc_outlet_density > intervention_limit, intervention_limit, alc_outlet_density)
+         ) |> 
+  # group_by(intervention) |> 
+  # Use the model and generate predictions
+  gather_predictions(my_model, type = "response", .pred ="p_outcome") |> 
+  # Average those p_outcome to get the probability of binge drinking when the intervention is implemented 
+  group_by(intervention) |> 
+  summarise(avg_p_outcome_intervention = mean(p_outcome)) |> 
+  pull() |> 
+  diff()
+}
+ATE_deterministic(intervention_limit = 120, split =ahern_data)
+
+my_boots <- bootstraps(ahern_data, times = 500)
+
+tic()
+test <- my_boots |> 
+  mutate(df = map(splits, as_tibble),
+         estimate = map_dbl(df, ~ATE_deterministic(split = .x))) |> 
+  select(estimate) |> 
+  rowid_to_column()
+toc()
+
+test |> 
+  summarise(
+    across(estimate, c(mean = mean, 
+                       lower_bound = ~quantile(.x, 0.025),
+                       upper_bound = ~quantile(.x, 0.975)
+                       ))
+  ) |> 
+  mutate(obs_diff = 
+           ATE_deterministic(intervention_limit = 100, split =ahern_data)
+           )
+```
+
+## Analysis 2
+
+Intervention 1: Deterministic intervention Population 2: Estimate the change in binge drinking associated with alcohol outlet density changes for the city overall
+
+The steps are the same but I will modify the `ATE_deterministic` function to reflect the change in the population
+
+```{r}
+ATT_deterministic <- 
+  function(
+    intervention_limit = 100, 
+    split
+  ) {
+    
+    # intervention
+  intervention_limit <- intervention_limit
+  
+  # model
+  my_model <- split |> 
+  select(-neighborhood_id) %>%
+  glm(binge_drink~., family = binomial(), data = .)
+  
+  # estimation
+split |> 
+  bind_rows(split, .id = "intervention") |> 
+  mutate(intervention = ifelse(intervention == 1, "No","Yes")) |> 
+  # Modify the exposure people in the intervention group to reflect the change
+  mutate(alc_outlet_density = 
+           ifelse(intervention == "Yes" &alc_outlet_density > intervention_limit, intervention_limit, alc_outlet_density)
+         ) |> 
+  # Use the model and generate predictions
+  gather_predictions(my_model, type = "response", .pred ="p_outcome") |> 
+    
+  # Include only predictions from the subset of interest
+  filter(alc_outlet_density >= intervention_limit) |> 
+
+  # Average those p_outcome to get the probability of binge drinking when the intervention is implemented 
+  group_by(intervention) |> 
+  summarise(avg_p_outcome_intervention = mean(p_outcome)) |> 
+  pull() |> 
+  diff()
+}
+
+ATT_deterministic(split = ahern_data)
+
+# No need to run this again since I run it before
+# my_boots <- bootstraps(ahern_data, times = 500)
+
+tic()
+test <- my_boots |> 
+  mutate(df = map(splits, as_tibble),
+         estimate = map_dbl(df, ~ATT_deterministic(split = .x))) |> 
+  select(estimate) |> 
+  rowid_to_column()
+toc()
+
+test |> 
+  summarise(
+    across(estimate, c(mean = mean, 
+                       lower_bound = ~quantile(.x, 0.025),
+                       upper_bound = ~quantile(.x, 0.975)
+                       ))
+  ) |> 
+  mutate(obs_diff = 
+           ATT_deterministic(intervention_limit = 100, split =ahern_data)
+           )
+ATT_deterministic(intervention_limit = 100, split =ahern_data)
+ATE_deterministic(intervention_limit = 100, split =ahern_data)
+```
+
+## Analysis 3
+
+Intervention 2: **Stochastic intervention**
+
+Population 1: Estimate the difference in binge drinking associated with alcohol outlet density changes for the city overall (ATE)
+
+**How to do this?**
+
+1.  Select an upper limit for alcohol outlet density. Individuals in communities that have outlet densities above this level will be set approximately to the limit, but with some stochastic variation.
+2.  Set the level of variation around the limit. Note: the amount of random variation around the limit that is appropriate depends on the context of the study, the exposure of interest, and the goals of the researcher. In this example, random variation is introduced by assigning a new alcohol outlet density for each neighborhood with density above the hypothetical limit to the limit plus a randomly drawn value from a normal distribution with mean 0 and a selected standard devation (represented here by the variable `variation.sd`).
+    -   One approach for selecting `variation.sd` is [to use a fraction of the total observed variation in the exposure]{.underline}. For example, by setting the variable "level" to 8, we assign `variation.sd` to be one eighth of the standard deviation of `alc_outlet_density` overall.
+
+    -   In this manner, the amount of variation introduced around the limit is proportional to the amount of overall variation in the exposure in the data. In this study, we set "level" to 4, 8, and 16, to reflect "a lot", "a medium amount", and "a little" variation, respectively. We recommend testing a range of levels. Many other approaches are also possible.
+
+### Steps
+
+Since the same model is gonna be used, I will skip step 1 since I have `my_model` created before.
+
+#### Step 2, 3, 4, and 5
+
+```{r}
+# Under the intervention of setting the exposure in those above 100 to 100
+intervention_limit <- 100
+# Set the stochastic variation
+variation_factor <- 8
+variation_sd <- sd(data$alc_outlet_density)/variation_factor
+
+ahern_data |> 
+  bind_rows(ahern_data, .id = "intervention") |> 
+  mutate(intervention = ifelse(intervention == 1, "No","Yes")) |> 
+  # Modify the exposure people in the intervention group to reflect the change
+  group_by(neighborhood_id) |>  # Not sure why grouping but this is what they did in the paper
+  mutate(alc_outlet_density = 
+           ifelse(
+             intervention == "Yes" & alc_outlet_density > intervention_limit,
+             intervention_limit + rnorm(1,0, variation_sd), 
+             alc_outlet_density)
+         ) |> 
+  ungroup() |> 
+  # group_by(intervention) |> 
+  # Use the model and generate predictions
+  gather_predictions(my_model, type = "response", .pred ="p_outcome") |> 
+  # Average those p_outcome to get the probability of binge drinking when the intervention is implemented 
+  group_by(intervention) |> 
+  summarise(avg_p_outcome_intervention = mean(p_outcome)) |> 
+  pull() |> 
+  diff()
+```
+
+#### Step 6
+
+Bootstrap your SEs
+
+```{r}
+# Lump all the previous steps in a concise function
+# I call it ATE because we will use all the datasets in averaging and deterministic because this is the type of exposure change we make
+ATE_stochastic <- 
+  function(
+    intervention_limit = 100, 
+    split,
+    sd_from_data,
+    variation_factor
+  ) {
+    
+    # intervention
+  intervention_limit <- intervention_limit
+  variation_sd <- sd_from_data / variation_factor
+  # model
+  my_model <- split |> 
+  select(-neighborhood_id) %>%
+  glm(binge_drink~., family = binomial(), data = .)
+  
+  # estimation
+split |> 
+  bind_rows(split, .id = "intervention") |> 
+  mutate(intervention = ifelse(intervention == 1, "No","Yes")) |> 
+  # Modify the exposure people in the intervention group to reflect the change
+  group_by(neighborhood_id) |>  # Not sure why grouping but this is what they did in the paper
+  mutate(alc_outlet_density = 
+           ifelse(
+             intervention == "Yes" & alc_outlet_density > intervention_limit,
+             intervention_limit + rnorm(1,0, variation_sd), 
+             alc_outlet_density)
+         ) |> 
+  ungroup() |> 
+  # group_by(intervention) |> 
+  # Use the model and generate predictions
+  gather_predictions(my_model, type = "response", .pred ="p_outcome") |> 
+  # Average those p_outcome to get the probability of binge drinking when the intervention is implemented 
+  group_by(intervention) |> 
+  summarise(avg_p_outcome_intervention = mean(p_outcome)) |> 
+  pull() |> 
+  diff()
+}
+# Test my function
+ATE_stochastic(intervention_limit = 100, 
+               split =ahern_data,
+               variation_factor = 8,
+               sd_from_data = sd(ahern_data$alc_outlet_density))
+
+set.seed(789)
+my_boots <- bootstraps(ahern_data, times = 500)
+
+tic()
+test2 <- my_boots |> 
+  mutate(df = map(splits, as_tibble),
+         estimate = map_dbl(df, ~ATE_stochastic(split = .x, 
+                                                variation_factor = 8, 
+                                                sd_from_data = sd(ahern_data$alc_outlet_density)))) |> 
+  select(estimate) |> 
+  rowid_to_column()
+
+
+test2 |> 
+  summarise(
+    across(estimate, c(mean = mean, 
+                       lower_bound = ~quantile(.x, 0.025),
+                       upper_bound = ~quantile(.x, 0.975)
+                       ))
+  ) |> 
+  mutate(obs_diff = 
+           ATE_stochastic(intervention_limit = 100, 
+                          split =ahern_data,
+                          variation_factor = 8,
+                          sd_from_data = sd(ahern_data$alc_outlet_density))
+           )
+toc()
+```
+
+## Analysis 4
+
+This function is kinda tricky because in stochastic settings those who are interevened upon might actually be below the limit by chance
+
+```{r}
+# Lump all the previous steps in a concise function
+# I call it ATE because we will use all the datasets in averaging and deterministic because this is the type of exposure change we make
+ATT_stochastic <- 
+  function(
+    intervention_limit = 100, 
+    split,
+    sd_from_data,
+    variation_factor
+  ) {
+    
+    # intervention
+  intervention_limit <- intervention_limit
+  variation_sd <- sd_from_data / variation_factor
+  # model
+  my_model <- split |> 
+  select(-neighborhood_id) %>%
+  glm(binge_drink~., family = binomial(), data = .)
+  
+  # estimation
+split |> 
+  bind_rows(split, .id = "intervention") |> 
+  mutate(intervention = ifelse(intervention == 1, "No","Yes")) |> 
+  # Modify the exposure people in the intervention group to reflect the change
+  group_by(neighborhood_id) |>  # Not sure why grouping but this is what they did in the paper
+  mutate(treated = ifelse(alc_outlet_density > intervention_limit,1,0)) |> 
+  mutate(alc_outlet_density = 
+           ifelse(
+             intervention == "Yes" & alc_outlet_density > intervention_limit,
+             intervention_limit + rnorm(1,0, variation_sd), 
+             alc_outlet_density)
+         ) |>  
+  ungroup() |>
+  # group_by(intervention) |> 
+  # Use the model and generate predictions
+  gather_predictions(my_model, type = "response", .pred ="p_outcome") |> 
+  # Average those p_outcome to get the probability of binge drinking when the intervention is implemented 
+  
+  # Include only predictions from the subset of interest
+  filter(treated == 1) |> 
+  group_by(intervention) |> 
+  summarise(avg_p_outcome_intervention = mean(p_outcome)) |> 
+  pull() |> 
+  diff()
+}
+# Test my function
+set.seed(123)
+ATT_stochastic(intervention_limit = 100, 
+               split =ahern_data,
+               variation_factor = 8,
+               sd_from_data = sd(ahern_data$alc_outlet_density))
+
+set.seed(789)
+my_boots <- bootstraps(ahern_data, times = 500)
+
+tic()
+test2 <- my_boots |> 
+  mutate(df = map(splits, as_tibble),
+         estimate = map_dbl(df, ~ATT_stochastic(split = .x, 
+                                                variation_factor = 8, 
+                                                sd_from_data = sd(ahern_data$alc_outlet_density)))) |> 
+  select(estimate) |> 
+  rowid_to_column()
+
+
+test2 |> 
+  summarise(
+    across(estimate, c(mean = mean, 
+                       lower_bound = ~quantile(.x, 0.025),
+                       upper_bound = ~quantile(.x, 0.975)
+                       ))
+  ) |> 
+  mutate(obs_diff = 
+           ATT_stochastic(intervention_limit = 100, 
+                          split =ahern_data,
+                          variation_factor = 8,
+                          sd_from_data = sd(ahern_data$alc_outlet_density))
+           )
+toc()
 ```
